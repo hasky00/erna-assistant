@@ -1,0 +1,15 @@
+# Netlify configuration for the Erna Next.js app.
+# The Next.js Runtime plugin handles SSR, API routes, and the proxy/middleware.
+
+[build]
+  # Next.js 16 defaults to a Turbopack production build, whose output the
+  # Netlify Next.js Runtime cannot fully route. Force a webpack build so
+  # page and API routes are wired up correctly.
+  command = "npm run build -- --webpack"
+
+[build.environment]
+  # Next.js 16 requires a modern Node runtime; match local dev.
+  NODE_VERSION = "22"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
