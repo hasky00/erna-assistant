@@ -12,8 +12,9 @@ import {
 } from "@/lib/erna/memory";
 import { deleteNote, saveNote, searchKnowledge } from "@/lib/erna/knowledge";
 import { convertCurrency } from "@/lib/erna/currency";
+import { isKibanaMcpConfigured, queryBankingTelemetry } from "@/lib/erna/kibanaMcp";
 
-export const ernaTools: ChatCompletionTool[] = [
+const baseTools: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
@@ -241,6 +242,38 @@ export const ernaTools: ChatCompletionTool[] = [
   },
 ];
 
+/** Delegates banking-telemetry questions to the remote Kibana MCP endpoint. */
+const kibanaTelemetryTool: ChatCompletionTool = {
+  type: "function",
+  function: {
+    name: "query_banking_telemetry",
+    description:
+      "Answer questions about banking telemetry — SWIFT/SEPA payments, transaction status, " +
+      "APM traces, microservice logs — by querying the organization's Elasticsearch through the " +
+      "remote Kibana MCP endpoint. Pass the user's question in natural language.",
+    parameters: {
+      type: "object",
+      properties: {
+        question: {
+          type: "string",
+          description: "The banking-telemetry question, in natural language.",
+        },
+      },
+      required: ["question"],
+      additionalProperties: false,
+    },
+  },
+};
+
+/**
+ * Tools exposed to the model. The telemetry tool is advertised only when the remote
+ * Kibana MCP endpoint is configured (KIBANA_MCP_URL + KIBANA_MCP_TOKEN), so unconfigured
+ * deployments never see a dead tool.
+ */
+export const ernaTools: ChatCompletionTool[] = isKibanaMcpConfigured()
+  ? [...baseTools, kibanaTelemetryTool]
+  : baseTools;
+
 export async function runTool(input: {
   supabase: SupabaseClient;
   userId: string;
@@ -344,6 +377,10 @@ export async function runTool(input: {
     }
     await updateProfilePreferences(input.supabase, input.userId, args.preferences as Record<string, unknown>);
     return { ok: true };
+  }
+
+  if (input.name === "query_banking_telemetry") {
+    return queryBankingTelemetry(String(args.question || ""));
   }
 
   if (input.name === "web_search") {
