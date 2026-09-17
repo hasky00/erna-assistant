@@ -7,9 +7,13 @@ import { createClient } from "@/lib/supabase/client";
 /**
  * Landing page for the password reset email.
  *
- * The link carries a PKCE `code`. The browser client exchanges it for a session
- * while initialising (`detectSessionInUrl`), using the verifier cookie set when
- * the reset was requested — so the link has to be opened in the same browser.
+ * Two link shapes are accepted:
+ * - `?token_hash=…&type=recovery` — from the Supabase "Reset password" email
+ *   template pointed at this page. Verified with `verifyOtp`, so it works in any
+ *   browser and for resets sent from the Supabase dashboard.
+ * - `?code=…` — Supabase's default PKCE link. The browser client exchanges it
+ *   while initialising, which needs the verifier cookie from the browser that
+ *   requested the reset.
  */
 export default function ResetPasswordPage() {
   const router = useRouter();
@@ -21,7 +25,19 @@ export default function ResetPasswordPage() {
 
   useEffect(() => {
     const supabase = createClient();
-    // getSession waits for the client to finish handling the code in the URL.
+    const params = new URLSearchParams(window.location.search);
+    const tokenHash = params.get("token_hash");
+
+    if (tokenHash && params.get("type") === "recovery") {
+      supabase.auth
+        .verifyOtp({ token_hash: tokenHash, type: "recovery" })
+        .then(({ data, error }) => {
+          setReady(!error && data.session ? "ok" : "invalid");
+        });
+      return;
+    }
+
+    // getSession waits for the client to finish handling a `code` in the URL.
     supabase.auth.getSession().then(({ data }) => {
       setReady(data.session ? "ok" : "invalid");
     });
@@ -69,8 +85,8 @@ export default function ResetPasswordPage() {
         {ready === "invalid" ? (
           <>
             <p className="mt-4 text-sm leading-6 text-[var(--danger)]">
-              This reset link is invalid or has expired. Links only work once,
-              and only in the browser where you asked for them.
+              This reset link is invalid or has expired. Each link only works
+              once — ask for a fresh one from the sign-in page.
             </p>
             <a
               href="/login"
