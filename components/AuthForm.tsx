@@ -33,7 +33,7 @@ export function AuthForm() {
       // Same message whether or not the address has an account, so the form
       // can't be used to find out who is registered.
       setNotice(
-        "If that email has an account, a rescue link is flying your way. Open it in this browser.",
+        "If that email has an account, a rescue link is flying your way. Check your inbox (and spam).",
       );
       return;
     }
