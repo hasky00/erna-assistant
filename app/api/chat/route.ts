@@ -4,11 +4,16 @@ import type {
   ChatCompletionMessageToolCall,
 } from "openai/resources/chat/completions";
 import { z } from "zod";
-import { createClient } from "@/lib/supabase/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { createApiClient } from "@/lib/supabase/api";
 import { getOpenAI, getOpenAIModel } from "@/lib/openai";
 import { composeSystemPrompt, getPersonalityPrompt } from "@/lib/erna/prompts";
 import { ensureProfile, getOpenTasks, getRelevantMemories } from "@/lib/erna/memory";
 import { ernaTools, runTool } from "@/lib/erna/tools";
+
+// How many assistant<->tool round trips a single chat turn may take before we
+// stop calling tools and force a written answer.
+const MAX_TOOL_ROUNDS = 4;
 
 const requestSchema = z.object({
   conversationId: z.string().uuid().optional(),
@@ -25,7 +30,7 @@ const requestSchema = z.object({
 
 export async function POST(request: Request) {
   try {
-    const supabase = await createClient();
+    const supabase = await createApiClient(request);
     const {
       data: { user },
       error: userError,
@@ -82,7 +87,7 @@ export async function POST(request: Request) {
     let finalContent = "";
     const toolResults: Array<{ name: string; result: unknown }> = [];
 
-    for (let i = 0; i < 4; i += 1) {
+    for (let i = 0; i < MAX_TOOL_ROUNDS; i += 1) {
       const completion = await openai.chat.completions.create({
         model: getOpenAIModel(),
         messages,
@@ -118,7 +123,21 @@ export async function POST(request: Request) {
     }
 
     if (!finalContent) {
-      finalContent = "I handled the tool work, but I need one more prompt to turn it into a clean answer.";
+      // We left the loop with tool calls still outstanding (or an empty reply).
+      // Ask once more with tools disabled so the turn ends in a real answer
+      // rather than a placeholder, since the tool side effects already happened.
+      const wrapUp = await openai.chat.completions.create({
+        model: getOpenAIModel(),
+        messages,
+        tools: ernaTools,
+        tool_choice: "none",
+        temperature: 0.7,
+      });
+      finalContent = wrapUp.choices[0]?.message?.content?.trim() || "";
+    }
+
+    if (!finalContent) {
+      finalContent = "I ran the tool work, but couldn't turn it into an answer. The changes above were saved — ask me again and I'll summarize them.";
     }
 
     await supabase.from("messages").insert({
@@ -178,7 +197,7 @@ function normalizeChatError(error: unknown) {
 }
 
 async function getOrCreateConversation(
-  supabase: Awaited<ReturnType<typeof createClient>>,
+  supabase: SupabaseClient,
   userId: string,
   conversationId: string | undefined,
   firstMessage: string,
@@ -206,7 +225,7 @@ async function getOrCreateConversation(
 }
 
 async function executeToolCall(
-  supabase: Awaited<ReturnType<typeof createClient>>,
+  supabase: SupabaseClient,
   userId: string,
   toolCall: ChatCompletionMessageToolCall,
 ) {

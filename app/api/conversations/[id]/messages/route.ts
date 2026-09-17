@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createApiClient } from "@/lib/supabase/api";
 import type { ChatMessage } from "@/lib/erna/types";
 
-export async function GET(
-  _request: Request,
+export async function GET(request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
@@ -13,7 +12,7 @@ export async function GET(
       return NextResponse.json({ error: "Conversation id required" }, { status: 400 });
     }
 
-    const supabase = await createClient();
+    const supabase = await createApiClient(request);
     const {
       data: { user },
       error: userError,

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createClient } from "@/lib/supabase/server";
+import { createApiClient } from "@/lib/supabase/api";
 import { deleteTask, rescheduleTask, setTaskStatus } from "@/lib/erna/memory";
 
 const patchSchema = z.object({
@@ -11,7 +11,7 @@ const patchSchema = z.object({
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
-    const supabase = await createClient();
+    const supabase = await createApiClient(request);
     const {
       data: { user },
       error: userError,
@@ -42,10 +42,10 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   }
 }
 
-export async function DELETE(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
-    const supabase = await createClient();
+    const supabase = await createApiClient(request);
     const {
       data: { user },
       error: userError,
