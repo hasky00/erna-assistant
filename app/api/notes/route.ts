@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createClient } from "@/lib/supabase/server";
+import { createApiClient } from "@/lib/supabase/api";
 import { listNotes, saveNote, searchKnowledge } from "@/lib/erna/knowledge";
 
 const createSchema = z.object({
@@ -11,7 +11,7 @@ const createSchema = z.object({
 
 export async function GET(request: Request) {
   try {
-    const supabase = await createClient();
+    const supabase = await createApiClient(request);
     const {
       data: { user },
       error: userError,
@@ -31,7 +31,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const supabase = await createClient();
+    const supabase = await createApiClient(request);
     const {
       data: { user },
       error: userError,

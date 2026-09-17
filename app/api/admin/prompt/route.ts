@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createClient } from "@/lib/supabase/server";
+import { createApiClient } from "@/lib/supabase/api";
 import { DEFAULT_ERNA_PROMPT, getPersonalityPrompt } from "@/lib/erna/prompts";
 
 const updateSchema = z.object({
   personalityPrompt: z.string().min(100).max(12000),
 });
 
-export async function GET() {
-  const supabase = await createClient();
+export async function GET(request: Request) {
+  const supabase = await createApiClient(request);
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -22,7 +22,7 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
-  const supabase = await createClient();
+  const supabase = await createApiClient(request);
   const {
     data: { user },
   } = await supabase.auth.getUser();
