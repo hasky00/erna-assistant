@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Erna mark — vector redraw of Design/erna-icon-gold-E-1024.png.
+
+  Transparent background (the raster app icon keeps the black rounded square);
+  this version is meant to sit on the app's own dark background. Geometry is
+  kept to plain shapes and one linear gradient, which is the subset of SVG that
+  Xcode's asset catalog compiler reliably rasterizes.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="ernaGold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F6E27A"/>
+      <stop offset="0.45" stop-color="#D4AF37"/>
+      <stop offset="1" stop-color="#B8912B"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Enclosing ring -->
+  <circle cx="512" cy="512" r="330" fill="none" stroke="#8C6A14" stroke-width="13"/>
+
+  <!-- Blocky E: stem plus three arms -->
+  <g fill="url(#ernaGold)">
+    <rect x="325" y="295" width="78"  height="430" rx="9"/>
+    <rect x="325" y="295" width="337" height="68"  rx="9"/>
+    <rect x="325" y="480" width="258" height="62"  rx="9"/>
+    <rect x="325" y="657" width="337" height="68"  rx="9"/>
+  </g>
+
+  <!-- Lightning bolt -->
+  <path d="M723 285 L660 401 L702 392 L650 508 L713 381 L670 390 Z" fill="url(#ernaGold)"/>
+</svg>

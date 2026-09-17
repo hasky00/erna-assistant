@@ -9,3 +9,11 @@ coverage
 *.log
 .DS_Store
 *.tsbuildinfo
+
+# iOS
+ios/Config/Secrets.xcconfig
+ios/Erna.xcodeproj
+ios/build
+ios/DerivedData
+xcuserdata/
+*.xcuserstate
