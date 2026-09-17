@@ -157,7 +157,7 @@ export function AuthForm() {
           }}
           className="mt-3 w-full text-center text-sm text-[var(--muted)] hover:text-[var(--accent)]"
         >
-          Password went on vacation?
+          Forgot, eh? Let me save you
         </button>
       ) : null}
 
