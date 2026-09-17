@@ -33,7 +33,7 @@ export function AuthForm() {
       // Same message whether or not the address has an account, so the form
       // can't be used to find out who is registered.
       setNotice(
-        "If an account exists for that email, a reset link is on its way. Open it in this browser.",
+        "If that email has an account, a rescue link is flying your way. Open it in this browser.",
       );
       return;
     }
@@ -77,7 +77,7 @@ export function AuthForm() {
           Erna
         </p>
         <h1 className="mt-2 text-3xl font-semibold">
-          {mode === "forgot" ? "Reset password" : "Private sign in"}
+          {mode === "forgot" ? "Memory glitch?" : "Private sign in"}
         </h1>
         <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
           Secure access for your personal assistant, memory, tasks, and admin
@@ -87,8 +87,8 @@ export function AuthForm() {
 
       {mode === "forgot" ? (
         <p className="mt-6 text-sm leading-6 text-[var(--muted)]">
-          Enter your account email and we&apos;ll send you a link to choose a
-          new password.
+          Happens to the best of us — even an assistant with long-term memory.
+          Drop your email and we&apos;ll send a link to pick a new password.
         </p>
       ) : (
         <div className="mt-6 grid grid-cols-2 rounded-md border border-[var(--border)] p-1">
@@ -144,7 +144,7 @@ export function AuthForm() {
             ? "Enter"
             : mode === "signup"
               ? "Create account"
-              : "Send reset link"}
+              : "Send rescue link"}
       </button>
 
       {mode === "signin" ? (
@@ -157,7 +157,7 @@ export function AuthForm() {
           }}
           className="mt-3 w-full text-center text-sm text-[var(--muted)] hover:text-[var(--accent)]"
         >
-          Forgot password?
+          Password went on vacation?
         </button>
       ) : null}
 

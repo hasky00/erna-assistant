@@ -58,11 +58,11 @@ export default function ResetPasswordPage() {
         <p className="text-xs uppercase tracking-[0.24em] text-[var(--accent)]">
           Erna
         </p>
-        <h1 className="mt-2 text-3xl font-semibold">Choose a new password</h1>
+        <h1 className="mt-2 text-3xl font-semibold">Fresh start</h1>
 
         {ready === "checking" ? (
           <p className="mt-4 text-sm text-[var(--muted)]">
-            Checking your reset link...
+            Dusting off your reset link...
           </p>
         ) : null}
 
@@ -113,7 +113,7 @@ export default function ResetPasswordPage() {
               disabled={loading}
               className="mt-6 w-full rounded-md bg-[var(--accent)] px-4 py-3 font-medium text-black hover:bg-[var(--accent-strong)]"
             >
-              {loading ? "Working..." : "Save password"}
+              {loading ? "Working..." : "Save it (and remember it this time)"}
             </button>
 
             {status ? (
