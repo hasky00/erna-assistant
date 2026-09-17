@@ -1,8 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import {
+  createRecoveryRequestClient,
+  isRecoveryFragment,
+} from "@/lib/supabase/recovery";
 
 export function AuthForm() {
   const router = useRouter();
@@ -13,18 +17,25 @@ export function AuthForm() {
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
 
+  useEffect(() => {
+    // A recovery link sent from the Supabase dashboard lands on the Site URL,
+    // which redirects here; hand its #tokens on to the reset page.
+    if (isRecoveryFragment(window.location.hash)) {
+      window.location.replace(`/auth/reset${window.location.hash}`);
+    }
+  }, []);
+
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
     setStatus("");
     setNotice("");
 
-    const supabase = createClient();
-
     if (mode === "forgot") {
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/auth/reset`,
-      });
+      const { error } =
+        await createRecoveryRequestClient().auth.resetPasswordForEmail(email, {
+          redirectTo: `${window.location.origin}/auth/reset`,
+        });
       setLoading(false);
       if (error) {
         setStatus(error.message);
@@ -38,6 +49,7 @@ export function AuthForm() {
       return;
     }
 
+    const supabase = createClient();
     const result =
       mode === "signin"
         ? await supabase.auth.signInWithPassword({ email, password })

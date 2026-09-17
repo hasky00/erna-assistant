@@ -7,13 +7,10 @@ import { createClient } from "@/lib/supabase/client";
 /**
  * Landing page for the password reset email.
  *
- * Two link shapes are accepted:
- * - `?token_hash=…&type=recovery` — from the Supabase "Reset password" email
- *   template pointed at this page. Verified with `verifyOtp`, so it works in any
- *   browser and for resets sent from the Supabase dashboard.
- * - `?code=…` — Supabase's default PKCE link. The browser client exchanges it
- *   while initialising, which needs the verifier cookie from the browser that
- *   requested the reset.
+ * The link arrives as `#access_token=…&refresh_token=…&type=recovery` (implicit
+ * flow), whether the reset was requested from the login page or sent from the
+ * Supabase dashboard, so it works in any browser. The tokens are read and
+ * removed from the address bar before the session is stored in cookies.
  */
 export default function ResetPasswordPage() {
   const router = useRouter();
@@ -24,23 +21,24 @@ export default function ResetPasswordPage() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    const supabase = createClient();
-    const params = new URLSearchParams(window.location.search);
-    const tokenHash = params.get("token_hash");
+    const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    const accessToken = params.get("access_token");
+    const refreshToken = params.get("refresh_token");
+    window.history.replaceState(null, "", window.location.pathname);
 
-    if (tokenHash && params.get("type") === "recovery") {
-      supabase.auth
-        .verifyOtp({ token_hash: tokenHash, type: "recovery" })
-        .then(({ data, error }) => {
-          setReady(!error && data.session ? "ok" : "invalid");
-        });
+    if (params.get("type") !== "recovery" || !accessToken || !refreshToken) {
+      setReady("invalid");
       return;
     }
 
-    // getSession waits for the client to finish handling a `code` in the URL.
-    supabase.auth.getSession().then(({ data }) => {
-      setReady(data.session ? "ok" : "invalid");
-    });
+    createClient()
+      .auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      })
+      .then(({ data, error }) => {
+        setReady(!error && data.session ? "ok" : "invalid");
+      });
   }, []);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
