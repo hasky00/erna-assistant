@@ -1,6 +1,6 @@
 import { AppShell } from "@/components/AppShell";
 import { AdminPromptEditor } from "@/components/AdminPromptEditor";
-import { requireUser } from "@/lib/auth";
+import { nostrNpub, requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { getPersonalityPrompt } from "@/lib/erna/prompts";
 
@@ -10,7 +10,7 @@ export default async function AdminPage() {
   const personalityPrompt = await getPersonalityPrompt(supabase, user.id);
 
   return (
-    <AppShell active="admin" email={user.email}>
+    <AppShell active="admin" email={user.email} npub={nostrNpub(user)}>
       <div className="mx-auto max-w-5xl px-4 py-6 md:px-8">
         <AdminPromptEditor initialPrompt={personalityPrompt} />
 

@@ -1,3 +1,4 @@
+import type { User } from "@supabase/supabase-js";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 
@@ -28,4 +29,10 @@ export async function requireUser() {
     redirect("/login");
   }
   return user;
+}
+
+/** The npub a user signed up with via "Sign in with Nostr", if any. */
+export function nostrNpub(user: User) {
+  const npub = user.app_metadata?.nostr_npub;
+  return typeof npub === "string" ? npub : null;
 }

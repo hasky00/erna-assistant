@@ -1,14 +1,18 @@
 import Link from "next/link";
 import { signOut } from "@/app/actions";
+import { shortNpub } from "@/lib/nostr/login";
 
 export function AppShell({
   children,
   active,
   email,
+  npub,
 }: {
   children: React.ReactNode;
   active: "chat" | "tasks" | "notes" | "admin";
   email?: string | null;
+  /** Set when the user signed in with Nostr; replaces the placeholder email. */
+  npub?: string | null;
 }) {
   const navItems: Array<{ href: string; label: string; key: typeof active }> = [
     { href: "/chat", label: "Chat", key: "chat" },
@@ -24,6 +28,11 @@ export function AppShell({
             <div>
               <p className="text-xs uppercase tracking-[0.24em] text-[var(--accent)]">Private assistant</p>
               <h1 className="mt-1 text-3xl font-semibold">Erna</h1>
+              {npub ? (
+                <p className="mt-1 font-mono text-xs text-[var(--accent)]" title={npub}>
+                  {shortNpub(npub)}
+                </p>
+              ) : null}
               <p className="mt-2 hidden text-sm leading-6 text-[var(--muted)] md:block">
                 Memory, tasks, tools, and personality controls in one private workspace.
               </p>
@@ -51,7 +60,7 @@ export function AppShell({
             ))}
           </nav>
 
-          {email ? <p className="mt-5 hidden text-xs text-[var(--muted)] md:block">{email}</p> : null}
+          {email && !npub ? <p className="mt-5 hidden text-xs text-[var(--muted)] md:block">{email}</p> : null}
         </aside>
 
         <section className="min-w-0">{children}</section>
