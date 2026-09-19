@@ -46,7 +46,7 @@ OPENAI_API_KEY=
 OPENAI_MODEL=gpt-4.1-mini
 ```
 
-`SUPABASE_SERVICE_ROLE_KEY` is reserved for future admin jobs. Do not expose it in client code.
+`SUPABASE_SERVICE_ROLE_KEY` is required for Sign in with Nostr (see below). It is only read server-side — never give it a `NEXT_PUBLIC_` prefix or import `lib/supabase/admin.ts` from client code.
 
 5. Start the app:
 
@@ -55,6 +55,37 @@ npm run dev
 ```
 
 6. Open `http://localhost:3000`, create an account, then chat with Erna.
+
+## Sign in with Nostr
+
+The login page has a **Sign in with Nostr** button next to email/password. It
+uses a [NIP-07](https://github.com/nostr-protocol/nips/blob/master/07.md)
+browser extension (`window.nostr`, e.g. Alby or nos2x); without one, the page
+shows install links.
+
+1. `POST /api/auth/nostr/challenge` returns a random 32-byte challenge and
+   stores it in a short-lived (5 min), httpOnly cookie.
+2. The browser asks the extension to sign a kind `22242` event (NIP-42 style)
+   with tags `["relay", <site origin>]` and `["challenge", <challenge>]`.
+3. `POST /api/auth/nostr/verify` burns the challenge cookie, then checks the
+   event with `nostr-tools`: kind, challenge, site host, timestamp (±5 min),
+   event id, and Schnorr signature against the pubkey.
+4. The pubkey is looked up in `profiles.npub`. On first sign-in the server
+   creates a Supabase user with a placeholder email `<hex pubkey>@nostr.erna`
+   (no password, so email/password login is impossible) and a profile row
+   holding the npub.
+5. The server mints a normal Supabase session: it generates a magic-link token
+   with the service-role key (no email is sent) and immediately redeems it with
+   `verifyOtp` on the cookie-backed client. The rest of the app — RLS, bearer
+   auth, `/api/chat` — sees an ordinary Supabase user.
+
+When signed in with Nostr, the sidebar header shows the shortened npub instead
+of the placeholder email.
+
+**Database:** run `supabase/migrations/20260918_nostr_login.sql` on existing
+projects (fresh setups get it from `schema.sql`). It adds `profiles.npub`
+(unique) and a trigger so only the service role can set it; otherwise the
+"profiles are private" policy would let a user claim someone else's key.
 
 ## Project Structure
 

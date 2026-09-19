@@ -1,12 +1,12 @@
 import { AppShell } from "@/components/AppShell";
 import { ChatShell } from "@/components/ChatShell";
-import { requireUser } from "@/lib/auth";
+import { nostrNpub, requireUser } from "@/lib/auth";
 
 export default async function ChatPage() {
   const user = await requireUser();
 
   return (
-    <AppShell active="chat" email={user.email}>
+    <AppShell active="chat" email={user.email} npub={nostrNpub(user)}>
       <ChatShell />
     </AppShell>
   );

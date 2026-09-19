@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { NostrSignIn } from "@/components/NostrSignIn";
+import { isNostrEmail } from "@/lib/nostr/login";
 
 export function AuthForm() {
   const router = useRouter();
@@ -18,6 +20,12 @@ export function AuthForm() {
     setLoading(true);
     setStatus("");
     setNotice("");
+
+    if (isNostrEmail(email)) {
+      setLoading(false);
+      setStatus("That address belongs to a Nostr account — use Sign in with Nostr.");
+      return;
+    }
 
     const supabase = createClient();
 
@@ -174,6 +182,8 @@ export function AuthForm() {
           Back to sign in
         </button>
       ) : null}
+
+      {mode !== "forgot" ? <NostrSignIn /> : null}
 
       {notice ? (
         <p className="mt-4 text-sm text-[var(--muted)]">{notice}</p>
