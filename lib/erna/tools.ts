@@ -12,6 +12,7 @@ import {
 } from "@/lib/erna/memory";
 import { deleteNote, saveNote, searchKnowledge } from "@/lib/erna/knowledge";
 import { convertCurrency } from "@/lib/erna/currency";
+import { lookupBookingRule } from "@/lib/erna/accounting";
 
 export const ernaTools: ChatCompletionTool[] = [
   {
@@ -200,6 +201,22 @@ export const ernaTools: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "bookkeeping_rule",
+      description:
+        "Look up how to book a Hasky Labs expense or bank transaction in Dinero (Danish bookkeeping): account, momskode, and whether to make it an automatic rule. Knowledge only; does not touch Dinero.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Supplier name or bank transaction text, e.g. 'Anthropic' or 'NETLIFY INC'." },
+        },
+        required: ["query"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "update_preferences",
       description: "Replace the saved user preferences object when the user explicitly shares preferences.",
       parameters: {
@@ -336,6 +353,10 @@ export async function runTool(input: {
       from: String(args.from || ""),
       to: String(args.to || ""),
     });
+  }
+
+  if (input.name === "bookkeeping_rule") {
+    return lookupBookingRule(String(args.query || ""));
   }
 
   if (input.name === "update_preferences") {

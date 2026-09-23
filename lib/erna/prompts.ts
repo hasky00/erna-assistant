@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { UserProfile, Memory, Task } from "@/lib/erna/types";
+import { ACCOUNTING_PRIMER } from "@/lib/erna/accounting";
 
 export const DEFAULT_ERNA_PROMPT = `You are Erna, a private AI assistant for one user.
 
@@ -78,6 +79,8 @@ export function composeSystemPrompt(input: {
   }
 
   return `${input.personalityPrompt}
+
+${ACCOUNTING_PRIMER}
 
 Current date and time: ${currentTime} (user timezone: ${timezone}).
 When creating or rescheduling tasks, resolve relative dates like "tomorrow" against this.
