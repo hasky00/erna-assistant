@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createApiClient } from "@/lib/supabase/api";
+import { authenticate, safeError } from "@/lib/erna/guard";
 import { createTask, listTasks } from "@/lib/erna/memory";
 
 const createSchema = z.object({
@@ -11,14 +11,7 @@ const createSchema = z.object({
 
 export async function GET(request: Request) {
   try {
-    const supabase = await createApiClient(request);
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
-    if (userError || !user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const { supabase, user } = await authenticate(request);
 
     const status = new URL(request.url).searchParams.get("status");
     const filter =
@@ -26,21 +19,13 @@ export async function GET(request: Request) {
     const tasks = await listTasks(supabase, user.id, filter);
     return NextResponse.json({ tasks });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to load tasks";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return safeError(error, "Failed to load tasks");
   }
 }
 
 export async function POST(request: Request) {
   try {
-    const supabase = await createApiClient(request);
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
-    if (userError || !user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const { supabase, user } = await authenticate(request);
 
     const parsed = createSchema.safeParse(await request.json());
     if (!parsed.success) {
@@ -54,7 +39,6 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({ task }, { status: 201 });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to create task";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return safeError(error, "Failed to create task");
   }
 }

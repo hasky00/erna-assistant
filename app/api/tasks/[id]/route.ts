@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createApiClient } from "@/lib/supabase/api";
+import { authenticate, safeError } from "@/lib/erna/guard";
 import { deleteTask, rescheduleTask, setTaskStatus } from "@/lib/erna/memory";
 
 const patchSchema = z.object({
@@ -11,14 +11,7 @@ const patchSchema = z.object({
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
-    const supabase = await createApiClient(request);
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
-    if (userError || !user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const { supabase, user } = await authenticate(request);
 
     const parsed = patchSchema.safeParse(await request.json());
     if (!parsed.success) {
@@ -37,27 +30,18 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     }
     return NextResponse.json({ task });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to update task";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return safeError(error, "Failed to update task");
   }
 }
 
 export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
-    const supabase = await createApiClient(request);
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
-    if (userError || !user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const { supabase, user } = await authenticate(request);
 
     await deleteTask(supabase, user.id, id);
     return NextResponse.json({ ok: true });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to delete task";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return safeError(error, "Failed to delete task");
   }
 }

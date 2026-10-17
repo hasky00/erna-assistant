@@ -8,6 +8,7 @@ import {
 } from "@/lib/nostr/login";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { isAllowedNpub } from "@/lib/erna/guard";
 
 function fail(error: string, status = 400) {
   return NextResponse.json({ error }, { status, headers: { "Cache-Control": "no-store" } });
@@ -104,6 +105,11 @@ export async function POST(request: Request) {
   const result = verifyLoginEvent(body?.event, { challenge, host: requestHost(request) });
   if (!result.ok) {
     return fail(result.error, 401);
+  }
+  // Valid signature, but is this key on the guest list? Check before we
+  // create anything so strangers never get an account at all.
+  if (!isAllowedNpub(result.npub)) {
+    return fail("This key is not invited to use Erna.", 403);
   }
 
   let email: string;

@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import type Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { createApiClient } from "@/lib/supabase/api";
 import { getAnthropic, getAnthropicModel } from "@/lib/erna/llm";
+import { authenticate, enforceChatRateLimit, AuthError } from "@/lib/erna/guard";
 import { composeSystemPrompt, getPersonalityPrompt } from "@/lib/erna/prompts";
 import { ensureProfile, getOpenTasks, getRelevantMemories } from "@/lib/erna/memory";
 import { ernaTools, runTool } from "@/lib/erna/tools";
@@ -32,15 +32,8 @@ const requestSchema = z.object({
 
 export async function POST(request: Request) {
   try {
-    const supabase = await createApiClient(request);
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
-
-    if (userError || !user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const { supabase, user } = await authenticate(request);
+    await enforceChatRateLimit(supabase, user.id);
 
     const parsed = requestSchema.safeParse(await request.json());
     if (!parsed.success) {
@@ -164,6 +157,7 @@ export async function POST(request: Request) {
       toolResults,
     });
   } catch (error) {
+    if (error instanceof AuthError) return error.toResponse();
     const normalized = normalizeChatError(error);
     return NextResponse.json({ error: normalized.message }, { status: normalized.status });
   }
@@ -224,11 +218,9 @@ function normalizeChatError(error: unknown) {
     }
   }
 
-  if (error instanceof Error) {
-    return { status: 500, message: error.message };
-  }
-
-  return { status: 500, message: "Chat failed unexpectedly." };
+  // Never leak Postgres / SDK internals to the client.
+  console.error("[erna] chat failed", error);
+  return { status: 500, message: "Chat failed unexpectedly. Please try again." };
 }
 
 async function getOrCreateConversation(

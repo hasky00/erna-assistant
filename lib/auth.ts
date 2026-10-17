@@ -1,6 +1,7 @@
 import type { User } from "@supabase/supabase-js";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { isAllowedUser } from "@/lib/erna/guard";
 
 export async function getCurrentUser() {
   try {
@@ -27,6 +28,9 @@ export async function requireUser() {
   const user = await getCurrentUser();
   if (!user) {
     redirect("/login");
+  }
+  if (!isAllowedUser(user)) {
+    redirect("/login?denied=1");
   }
   return user;
 }

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createApiClient } from "@/lib/supabase/api";
+import { authenticate, safeError } from "@/lib/erna/guard";
 import type { Conversation } from "@/lib/erna/types";
 
 const MAX_LIMIT = 50;
@@ -7,15 +7,7 @@ const DEFAULT_LIMIT = 20;
 
 export async function GET(request: Request) {
   try {
-    const supabase = await createApiClient(request);
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
-
-    if (userError || !user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const { supabase, user } = await authenticate(request);
 
     const { searchParams } = new URL(request.url);
     const rawLimit = parseInt(searchParams.get("limit") || String(DEFAULT_LIMIT), 10);
@@ -36,9 +28,7 @@ export async function GET(request: Request) {
 
     const { data, error } = await query.returns<Conversation[]>();
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
+    if (error) throw error;
 
     const rows = data || [];
     const hasMore = rows.length > limit;
@@ -49,7 +39,6 @@ export async function GET(request: Request) {
       hasMore,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to load conversations";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return safeError(error, "Failed to load conversations");
   }
 }

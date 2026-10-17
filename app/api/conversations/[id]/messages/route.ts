@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createApiClient } from "@/lib/supabase/api";
+import { authenticate, safeError } from "@/lib/erna/guard";
 import type { ChatMessage } from "@/lib/erna/types";
 
 export async function GET(request: Request,
@@ -12,15 +12,7 @@ export async function GET(request: Request,
       return NextResponse.json({ error: "Conversation id required" }, { status: 400 });
     }
 
-    const supabase = await createApiClient(request);
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
-
-    if (userError || !user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const { supabase, user } = await authenticate(request);
 
     // Verify ownership (and get title)
     const { data: conv, error: convError } = await supabase
@@ -59,7 +51,6 @@ export async function GET(request: Request,
       messages,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to load conversation messages";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return safeError(error, "Failed to load conversation messages");
   }
 }

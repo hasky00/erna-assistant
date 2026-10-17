@@ -118,6 +118,13 @@ tools/
 
 ## Security Notes
 
+- Guest list: set `ERNA_ALLOWED_EMAILS` and/or `ERNA_ALLOWED_NPUBS`. Every API
+  route and page checks it after authentication; Nostr sign-in checks it before
+  creating an account. Unlisted users get 403.
+- Per-user rate limiting on `/api/chat` (`ERNA_RATE_PER_MINUTE`, `ERNA_RATE_PER_DAY`).
+- `fetch_url` resolves DNS and refuses private/link-local/loopback targets, re-checks
+  every redirect hop, and caps bodies at 1 MB.
+- API errors are logged server-side; clients only see generic messages.
 - All app pages require Supabase authentication.
 - API routes validate the current user server-side.
 - Supabase row-level security keeps user data private.

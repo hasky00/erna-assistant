@@ -1,17 +1,10 @@
 import { NextResponse } from "next/server";
-import { createApiClient } from "@/lib/supabase/api";
+import { authenticate, safeError } from "@/lib/erna/guard";
 import { convertCurrency } from "@/lib/erna/currency";
 
 export async function GET(request: Request) {
   try {
-    const supabase = await createApiClient(request);
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
-    if (userError || !user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const { supabase, user } = await authenticate(request);
 
     const { searchParams } = new URL(request.url);
     const result = await convertCurrency({
@@ -22,7 +15,6 @@ export async function GET(request: Request) {
 
     return NextResponse.json(result, { status: result.ok ? 200 : 400 });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Conversion failed";
-    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+    return safeError(error, "Conversion failed");
   }
 }

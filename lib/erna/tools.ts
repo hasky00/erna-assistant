@@ -545,6 +545,83 @@ async function wikipediaLookup(query: string, lang: string) {
   };
 }
 
+const FETCH_MAX_BYTES = 1_000_000;
+const FETCH_MAX_REDIRECTS = 3;
+
+function isPrivateIPv4(ip: string) {
+  const parts = ip.split(".").map(Number);
+  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
+  const [a, b] = parts;
+  return (
+    a === 0 || a === 10 || a === 127 || // this-net, private, loopback
+    (a === 100 && b >= 64 && b <= 127) || // carrier-grade NAT
+    (a === 169 && b === 254) || // link-local + cloud metadata
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 198 && (b === 18 || b === 19)) ||
+    a >= 224 // multicast + reserved
+  );
+}
+
+function isPrivateIPv6(ip: string) {
+  const v = ip.toLowerCase().replace(/^\[|\]$/g, "");
+  if (v === "::" || v === "::1") return true;
+  if (v.startsWith("::ffff:")) {
+    const tail = v.slice(7);
+    return /^\d+\.\d+\.\d+\.\d+$/.test(tail) ? isPrivateIPv4(tail) : true;
+  }
+  return v.startsWith("fc") || v.startsWith("fd") || v.startsWith("fe8") || v.startsWith("fe9") || v.startsWith("fea") || v.startsWith("feb");
+}
+
+function isPrivateAddress(ip: string) {
+  return ip.includes(":") ? isPrivateIPv6(ip) : isPrivateIPv4(ip);
+}
+
+/** Resolve the host and refuse if *any* address lands in a private range. */
+async function assertPublicHost(url: URL) {
+  const host = url.hostname.replace(/^\[|\]$/g, "");
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) {
+    throw new Error("Private or local addresses are not allowed.");
+  }
+  if (/^[\d.]+$/.test(host) || host.includes(":")) {
+    if (isPrivateAddress(host)) throw new Error("Private or local addresses are not allowed.");
+    return;
+  }
+  const { lookup } = await import("node:dns/promises");
+  const addresses = await lookup(host, { all: true }).catch(() => []);
+  if (!addresses.length) throw new Error(`Could not resolve ${host}.`);
+  if (addresses.some((a) => isPrivateAddress(a.address))) {
+    throw new Error("Private or local addresses are not allowed.");
+  }
+}
+
+async function readCapped(response: Response, max: number) {
+  const reader = response.body?.getReader();
+  if (!reader) return { text: "", capped: false };
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let capped = false;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done || !value) break;
+    total += value.byteLength;
+    if (total > max) {
+      chunks.push(value.subarray(0, value.byteLength - (total - max)));
+      capped = true;
+      await reader.cancel().catch(() => undefined);
+      break;
+    }
+    chunks.push(value);
+  }
+  const merged = new Uint8Array(chunks.reduce((n, c) => n + c.byteLength, 0));
+  let offset = 0;
+  for (const c of chunks) {
+    merged.set(c, offset);
+    offset += c.byteLength;
+  }
+  return { text: new TextDecoder("utf-8", { fatal: false }).decode(merged), capped };
+}
+
 async function fetchUrl(rawUrl: string) {
   let url: URL;
   try {
@@ -555,31 +632,47 @@ async function fetchUrl(rawUrl: string) {
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     return { ok: false, error: "Only http(s) URLs are supported." };
   }
-  // Keep the assistant from poking at private networks.
-  if (/^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|0\.|\[::1\])/.test(url.hostname)) {
-    return { ok: false, error: "Private or local addresses are not allowed." };
+  if (url.username || url.password) {
+    return { ok: false, error: "URLs with embedded credentials are not allowed." };
   }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15000);
   try {
-    const response = await fetch(url, {
-      headers: { "User-Agent": USER_AGENT, Accept: "text/html,application/xhtml+xml,text/plain,application/json" },
-      redirect: "follow",
-      signal: controller.signal,
-    });
+    // Follow redirects by hand so every hop is re-checked against private ranges.
+    let current = url;
+    let response: Response | null = null;
+    for (let hop = 0; hop <= FETCH_MAX_REDIRECTS; hop += 1) {
+      await assertPublicHost(current);
+      response = await fetch(current, {
+        headers: { "User-Agent": USER_AGENT, Accept: "text/html,application/xhtml+xml,text/plain,application/json" },
+        redirect: "manual",
+        signal: controller.signal,
+      });
+      const location = response.headers.get("location");
+      if (response.status >= 300 && response.status < 400 && location) {
+        if (hop === FETCH_MAX_REDIRECTS) return { ok: false, error: "Too many redirects." };
+        current = new URL(location, current);
+        if (current.protocol !== "http:" && current.protocol !== "https:") {
+          return { ok: false, error: "Redirected to a non-http URL." };
+        }
+        continue;
+      }
+      break;
+    }
+    if (!response) return { ok: false, error: "Fetch failed." };
     if (!response.ok) return { ok: false, error: `Fetch failed with ${response.status}` };
 
     const contentType = response.headers.get("content-type") || "";
-    const raw = await response.text();
+    const { text: raw, capped } = await readCapped(response, FETCH_MAX_BYTES);
     const text = contentType.includes("html") ? htmlToText(raw) : raw;
     const MAX = 12000;
     return {
       ok: true,
-      url: response.url,
+      url: current.toString(),
       title: contentType.includes("html") ? extractTitle(raw) : null,
       content_type: contentType,
-      truncated: text.length > MAX,
+      truncated: text.length > MAX || capped,
       text: text.slice(0, MAX),
     };
   } catch (error) {
