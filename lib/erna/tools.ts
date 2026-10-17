@@ -4,8 +4,11 @@ import { optionalEnv } from "@/lib/env";
 import {
   deleteMemory,
   getRelevantMemories,
+  createTask,
   listTasks,
   rescheduleTask,
+  updateProfileTimezone,
+  DEFAULT_TIMEZONE,
   saveMemory,
   setTaskStatus,
   updateProfilePreferences,
@@ -268,6 +271,18 @@ export const ernaTools: Anthropic.Tool[] = [
       },
   },
   {
+      name: "set_timezone",
+      description: "Set the user's home timezone (IANA name) when they tell you where they live or that times look wrong. Affects how 'tomorrow' and task due dates are resolved.",
+      input_schema: {
+        type: "object",
+        properties: {
+          timezone: { type: "string", description: "IANA zone, e.g. 'Europe/Copenhagen' or 'Asia/Jakarta'." },
+        },
+        required: ["timezone"],
+        additionalProperties: false,
+      },
+  },
+  {
       name: "current_datetime",
       description: "Get the exact current date and time in a given IANA timezone. Use for 'what time is it in Jakarta', countdowns, or date arithmetic.",
       input_schema: {
@@ -285,6 +300,7 @@ export async function runTool(input: {
   userId: string;
   name: string;
   argumentsText: string;
+  timezone?: string | null;
 }) {
   const args = parseToolArgs(input.argumentsText);
 
@@ -301,19 +317,12 @@ export async function runTool(input: {
   }
 
   if (input.name === "create_task") {
-    const { data, error } = await input.supabase
-      .from("tasks")
-      .insert({
-        user_id: input.userId,
-        title: String(args.title),
-        notes: typeof args.notes === "string" ? args.notes : null,
-        due_at: typeof args.due_at === "string" ? args.due_at : null,
-      })
-      .select("id, title, due_at, status")
-      .single();
-
-    if (error) throw error;
-    return { ok: true, task: data };
+    const task = await createTask(input.supabase, input.userId, {
+      title: String(args.title),
+      notes: typeof args.notes === "string" ? args.notes : null,
+      due_at: typeof args.due_at === "string" ? args.due_at : null,
+    });
+    return { ok: true, task };
   }
 
   if (input.name === "list_tasks") {
@@ -410,7 +419,20 @@ export async function runTool(input: {
   }
 
   if (input.name === "current_datetime") {
-    return currentDatetime(typeof args.timezone === "string" ? args.timezone : undefined);
+    return currentDatetime(
+      typeof args.timezone === "string" && args.timezone ? args.timezone : input.timezone || DEFAULT_TIMEZONE,
+    );
+  }
+
+  if (input.name === "set_timezone") {
+    const tz = String(args.timezone || "").trim();
+    try {
+      new Intl.DateTimeFormat("en-GB", { timeZone: tz });
+    } catch {
+      return { ok: false, error: `Unknown timezone: ${tz}` };
+    }
+    await updateProfileTimezone(input.supabase, input.userId, tz);
+    return { ok: true, timezone: tz };
   }
 
   if (input.name === "integration_status") {

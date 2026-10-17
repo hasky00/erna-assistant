@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { UserProfile, Memory, Task } from "@/lib/erna/types";
 import { ACCOUNTING_PRIMER } from "@/lib/erna/accounting";
+import { DEFAULT_TIMEZONE } from "@/lib/erna/memory";
 
 export const DEFAULT_ERNA_PROMPT = `You are Erna, a private AI assistant for one user.
 
@@ -60,12 +61,21 @@ export async function getPersonalityPrompt(supabase: SupabaseClient, userId: str
   return persona.includes("Operating style:") ? persona.split("Operating style:")[0].trim() : persona;
 }
 
+const BOOKKEEPING_HINT = /\b(bookkeep|booking|dinero|moms|vat|invoice|faktura|receipt|kvittering|expense|udgift|regnskab|bogf|konto|account(ing)?|skat|tax)\b/i;
+
+/**
+ * Build the system prompt as two blocks: a static one (persona, rules, optional
+ * accounting primer) that Anthropic can cache across calls, and a dynamic one
+ * (time, profile, memories, tasks) that changes every turn.
+ */
 export function composeSystemPrompt(input: {
   personalityPrompt: string;
   profile: UserProfile | null;
   memories: Memory[];
   tasks: Task[];
-}) {
+  /** Recent user text, used to decide whether the bookkeeping primer is worth its tokens. */
+  recentUserText?: string;
+}): { static: string; dynamic: string } {
   const profile = input.profile
     ? JSON.stringify(
         {
@@ -86,10 +96,10 @@ export function composeSystemPrompt(input: {
     ? input.tasks.map((task) => `- ${task.title}${task.due_at ? ` due ${task.due_at}` : ""} (${task.status})`).join("\n")
     : "No open tasks.";
 
-  const timezone = input.profile?.timezone || "UTC";
+  const timezone = input.profile?.timezone || DEFAULT_TIMEZONE;
   let currentTime: string;
   try {
-    currentTime = new Intl.DateTimeFormat("en-US", {
+    currentTime = new Intl.DateTimeFormat("en-GB", {
       dateStyle: "full",
       timeStyle: "short",
       timeZone: timezone,
@@ -98,14 +108,15 @@ export function composeSystemPrompt(input: {
     currentTime = `${new Date().toISOString()} (UTC)`;
   }
 
-  return `${input.personalityPrompt}
+  const includePrimer = BOOKKEEPING_HINT.test(input.recentUserText || "");
 
-${ERNA_OPERATING_RULES}
+  const staticBlock = [input.personalityPrompt, ERNA_OPERATING_RULES, includePrimer ? ACCOUNTING_PRIMER : ""]
+    .filter(Boolean)
+    .join("\n\n");
 
-${ACCOUNTING_PRIMER}
-
-Current date and time: ${currentTime} (user timezone: ${timezone}).
+  const dynamicBlock = `Current date and time: ${currentTime} (user timezone: ${timezone}).
 When creating or rescheduling tasks, resolve relative dates like "tomorrow" against this.
+If the user mentions living somewhere else or times look wrong, call set_timezone.
 
 Private context:
 
@@ -117,4 +128,6 @@ ${memories}
 
 Open tasks:
 ${tasks}`;
+
+  return { static: staticBlock, dynamic: dynamicBlock };
 }

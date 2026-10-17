@@ -12,7 +12,9 @@ import { ernaTools, runTool } from "@/lib/erna/tools";
 // stop calling tools and force a written answer. Research questions can chain
 // web_search -> fetch_url -> wikipedia_lookup, so give Erna some room.
 const MAX_TOOL_ROUNDS = 8;
-const MAX_OUTPUT_TOKENS = 2048;
+const MAX_OUTPUT_TOKENS = 4096;
+// How many stored turns to rebuild from the database for context.
+const HISTORY_TURNS = 40;
 
 // A chat turn can run several tool round trips; let the serverless function live long enough.
 export const maxDuration = 120;
@@ -38,7 +40,7 @@ const requestSchema = z.object({
       }),
     )
     .min(1)
-    .max(20),
+    .max(200),
   // Attached to the *last* user message only. Earlier attachments live on as a
   // "[attached: name]" note in history, not as bytes.
   attachments: z.array(attachmentSchema).max(3).optional(),
@@ -89,12 +91,39 @@ export async function POST(request: Request) {
       .eq("id", conversationId)
       .eq("user_id", user.id);
 
-    const system = composeSystemPrompt({ personalityPrompt, profile, memories, tasks });
+    // History comes from the database, not the client: it is the one place
+    // that still knows what tools returned in earlier turns. The client's
+    // copy is only the fallback for a brand-new conversation.
+    const stored = await loadStoredHistory(supabase, user.id, conversationId);
+    const history =
+      stored.length > 0
+        ? stored
+        : parsed.data.messages.slice(0, -1).map((m) => ({ role: m.role, content: m.content }));
+    const recentUserText = [...history, lastUserMessage]
+      .filter((m) => m.role === "user")
+      .slice(-4)
+      .map((m) => m.content)
+      .join("\n");
+
+    const system = composeSystemPrompt({ personalityPrompt, profile, memories, tasks, recentUserText });
 
     // Anthropic requires strictly alternating user/assistant turns starting
-    // with a user turn; merge any accidental repeats from the client.
-    const messages: Anthropic.MessageParam[] = normalizeHistory(parsed.data.messages);
+    // with a user turn; merge any accidental repeats.
+    const messages: Anthropic.MessageParam[] = normalizeHistory([
+      ...history,
+      { role: "user", content: lastUserMessage.content },
+    ]);
     if (attachments.length) attachToLastUserTurn(messages, attachments);
+
+    // Static prompt + tool definitions first with cache_control, so repeated
+    // rounds within a turn (and the next turn) reuse the cached prefix.
+    const systemBlocks: Anthropic.TextBlockParam[] = [
+      { type: "text", text: system.static, cache_control: { type: "ephemeral" } },
+      { type: "text", text: system.dynamic },
+    ];
+    const tools: Anthropic.Tool[] = ernaTools.map((tool, i) =>
+      i === ernaTools.length - 1 ? { ...tool, cache_control: { type: "ephemeral" } } : tool,
+    );
 
     const anthropic = getAnthropic();
     const model = getAnthropicModel();
@@ -105,13 +134,18 @@ export async function POST(request: Request) {
       const response = await anthropic.messages.create({
         model,
         max_tokens: MAX_OUTPUT_TOKENS,
-        system,
+        system: systemBlocks,
         messages,
-        tools: ernaTools,
+        tools,
         tool_choice: { type: "auto" },
       });
 
       messages.push({ role: "assistant", content: response.content });
+
+      if (response.stop_reason === "max_tokens") {
+        finalContent = `${extractText(response.content)}\n\n(I ran out of room — say "continue" and I'll pick up where I left off.)`;
+        break;
+      }
 
       const toolUses = response.content.filter(
         (block): block is Anthropic.ToolUseBlock => block.type === "tool_use",
@@ -125,7 +159,7 @@ export async function POST(request: Request) {
       // Run every requested tool, then hand all results back in one user turn.
       const results: Anthropic.ToolResultBlockParam[] = [];
       for (const toolUse of toolUses) {
-        const result = await executeToolCall(supabase, user.id, toolUse);
+        const result = await executeToolCall(supabase, user.id, toolUse, profile?.timezone);
         toolResults.push({ name: toolUse.name, result });
         results.push({
           type: "tool_result",
@@ -144,9 +178,9 @@ export async function POST(request: Request) {
       const wrapUp = await anthropic.messages.create({
         model,
         max_tokens: MAX_OUTPUT_TOKENS,
-        system,
+        system: systemBlocks,
         messages,
-        tools: ernaTools,
+        tools,
         tool_choice: { type: "none" },
       });
       finalContent = extractText(wrapUp.content).trim();
@@ -184,6 +218,59 @@ export async function POST(request: Request) {
     const normalized = normalizeChatError(error);
     return NextResponse.json({ error: normalized.message }, { status: normalized.status });
   }
+}
+
+type StoredMessage = {
+  role: "user" | "assistant";
+  content: string;
+  metadata: { toolResults?: Array<{ name: string; result: unknown }> } | null;
+};
+
+/**
+ * Rebuild the conversation from the database, folding each assistant turn's
+ * tool results back in as a compact note so Erna remembers task ids, pages
+ * she read, and numbers she computed instead of re-running everything.
+ */
+async function loadStoredHistory(
+  supabase: SupabaseClient,
+  userId: string,
+  conversationId: string,
+): Promise<Array<{ role: "user" | "assistant"; content: string }>> {
+  const { data, error } = await supabase
+    .from("messages")
+    .select("role, content, metadata")
+    .eq("conversation_id", conversationId)
+    .eq("user_id", userId)
+    .in("role", ["user", "assistant"])
+    .order("created_at", { ascending: false })
+    .limit(HISTORY_TURNS)
+    .returns<StoredMessage[]>();
+  if (error) throw error;
+
+  const rows = (data || []).reverse();
+  // The current user message was inserted just before this call; drop it so
+  // it isn't duplicated when we append it explicitly.
+  if (rows.length && rows[rows.length - 1].role === "user") rows.pop();
+
+  return rows.map((row) => {
+    if (row.role !== "assistant" || !row.metadata?.toolResults?.length) {
+      return { role: row.role, content: row.content };
+    }
+    const notes = row.metadata.toolResults
+      .map((t) => `${t.name}: ${compact(t.result)}`)
+      .join("\n");
+    return { role: "assistant", content: `${row.content}\n\n[tool results from this turn]\n${notes}` };
+  });
+}
+
+function compact(value: unknown, max = 700) {
+  let text: string;
+  try {
+    text = JSON.stringify(value);
+  } catch {
+    text = String(value);
+  }
+  return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
 /** Collapse consecutive same-role messages and make sure history starts with a user turn. */
@@ -299,6 +386,7 @@ async function executeToolCall(
   supabase: SupabaseClient,
   userId: string,
   toolUse: Anthropic.ToolUseBlock,
+  timezone?: string | null,
 ) {
   try {
     return await runTool({
@@ -306,6 +394,7 @@ async function executeToolCall(
       userId,
       name: toolUse.name,
       argumentsText: JSON.stringify(toolUse.input ?? {}),
+      timezone,
     });
   } catch (error) {
     return {

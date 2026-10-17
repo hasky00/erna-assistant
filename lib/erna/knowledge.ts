@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { keywords } from "@/lib/erna/memory";
 
 export type KnowledgeDocument = {
   id: string;
@@ -54,12 +55,7 @@ export async function deleteNote(supabase: SupabaseClient, userId: string, noteI
 }
 
 export async function searchKnowledge(supabase: SupabaseClient, userId: string, query: string) {
-  const terms = query
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .split(/\s+/)
-    .filter((term) => term.length > 3)
-    .slice(0, 6);
+  const terms = keywords(query, 6);
 
   let request = supabase
     .from("knowledge_documents")
