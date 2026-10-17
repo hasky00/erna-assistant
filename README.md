@@ -8,18 +8,19 @@ Erna is a private LLM-powered personal assistant with long-term memory, secure a
 - TypeScript
 - Tailwind CSS
 - Supabase Auth and Postgres
-- OpenAI API
+- Anthropic API (Claude) with tool use
 - Vercel-ready deployment
 
 ## Features
 
 - Auth-gated chat UI
-- OpenAI chat completions with tool calling
+- Claude (Anthropic) chat with tool calling — 19 tools
 - Editable Erna personality/system prompt
 - Long-term memory in Supabase (save, search, delete)
 - User profile and preferences
 - Task management: create, list, complete, reschedule, delete — via chat or a Tasks page
 - Knowledge base: save/search/delete notes — via chat or a Notes page
+- Knowledge tools: Wikipedia lookup, web search, read any URL, exact calculator, world clock
 - Currency converter (live ECB rates, no API key)
 - Time-aware system prompt (resolves "tomorrow" in the user's timezone)
 - Optional calendar, email, external task, and web search modules
@@ -42,8 +43,8 @@ npm install
 ```bash
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
-OPENAI_API_KEY=
-OPENAI_MODEL=gpt-4.1-mini
+ANTHROPIC_API_KEY=
+ANTHROPIC_MODEL=claude-sonnet-5-5
 ```
 
 `SUPABASE_SERVICE_ROLE_KEY` is required for Sign in with Nostr (see below). It is only read server-side — never give it a `NEXT_PUBLIC_` prefix or import `lib/supabase/admin.ts` from client code.
@@ -120,5 +121,5 @@ tools/
 - All app pages require Supabase authentication.
 - API routes validate the current user server-side.
 - Supabase row-level security keeps user data private.
-- OpenAI and optional provider API keys are only read server-side.
+- Anthropic and optional provider API keys are only read server-side.
 - Optional OAuth integrations should encrypt provider tokens before storing them in `tool_connections`.
