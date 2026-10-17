@@ -253,6 +253,21 @@ export const ernaTools: Anthropic.Tool[] = [
       },
   },
   {
+      name: "bitcoin_convert",
+      description:
+        "Convert between Bitcoin, sats, and any fiat currency using the live BTC price (mempool.space) plus live fiat rates. Use for 'X DKK in sats', 'how much is 50000 sats', or 'bitcoin price in EUR'. Units: BTC, SATS, or a 3-letter fiat code.",
+      input_schema: {
+        type: "object",
+        properties: {
+          amount: { type: "number" },
+          from: { type: "string", description: "BTC, SATS, or fiat code such as DKK, USD, EUR." },
+          to: { type: "string", description: "BTC, SATS, or fiat code such as DKK, USD, EUR." },
+        },
+        required: ["amount", "from", "to"],
+        additionalProperties: false,
+      },
+  },
+  {
       name: "current_datetime",
       description: "Get the exact current date and time in a given IANA timezone. Use for 'what time is it in Jakarta', countdowns, or date arithmetic.",
       input_schema: {
@@ -390,6 +405,10 @@ export async function runTool(input: {
     return calculate(String(args.expression || ""));
   }
 
+  if (input.name === "bitcoin_convert") {
+    return bitcoinConvert(Number(args.amount), String(args.from || ""), String(args.to || ""));
+  }
+
   if (input.name === "current_datetime") {
     return currentDatetime(typeof args.timezone === "string" ? args.timezone : undefined);
   }
@@ -501,26 +520,28 @@ async function wikipediaLookup(query: string, lang: string) {
   const hits = searchData.query?.search || [];
   if (!hits.length) return { ok: false, error: `No Wikipedia article found for "${query}".` };
 
-  // 2. Fetch the summary of the top hit.
+  // 2. Fetch the article body as plain text (not just the intro — the
+  //    answer to "who created X" is often a few paragraphs down).
   const title = hits[0].title;
-  const summaryRes = await fetch(`${base}/api/rest_v1/page/summary/${encodeURIComponent(title)}`, {
-    headers: { "User-Agent": USER_AGENT, Accept: "application/json" },
-  });
-  if (!summaryRes.ok) return { ok: false, error: `Wikipedia summary failed with ${summaryRes.status}` };
-  const summary = (await summaryRes.json()) as {
-    title: string;
-    description?: string;
-    extract?: string;
-    content_urls?: { desktop?: { page?: string } };
+  const extractUrl =
+    `${base}/w/api.php?action=query&format=json&prop=extracts|description&explaintext=1` +
+    `&exsectionformat=plain&exchars=6000&redirects=1&titles=${encodeURIComponent(title)}`;
+  const extractRes = await fetch(extractUrl, { headers: { "User-Agent": USER_AGENT } });
+  if (!extractRes.ok) return { ok: false, error: `Wikipedia extract failed with ${extractRes.status}` };
+  const extractData = (await extractRes.json()) as {
+    query?: { pages?: Record<string, { title?: string; extract?: string; description?: string }> };
   };
+  const page = Object.values(extractData.query?.pages || {})[0];
+  if (!page?.extract) return { ok: false, error: `Wikipedia article "${title}" had no readable text.` };
 
   return {
     ok: true,
-    title: summary.title,
-    description: summary.description || null,
-    extract: summary.extract || "",
-    url: summary.content_urls?.desktop?.page || `${base}/wiki/${encodeURIComponent(title)}`,
+    title: page.title || title,
+    description: page.description || null,
+    extract: page.extract,
+    url: `${base}/wiki/${encodeURIComponent((page.title || title).replace(/ /g, "_"))}`,
     other_matches: hits.slice(1).map((h) => h.title),
+    note: "Extract is truncated to ~6000 characters. Call fetch_url on the url for the full article.",
   };
 }
 
@@ -618,6 +639,74 @@ function currentDatetime(timezone?: string) {
   } catch {
     return { ok: false, error: `Unknown timezone: ${tz}` };
   }
+}
+
+
+const SATS_PER_BTC = 100_000_000;
+
+/** Live BTC price in a fiat currency. mempool.space quotes a handful of
+ *  majors directly; anything else is bridged through USD with live fiat rates. */
+async function bitcoinPrice(fiat: string): Promise<{ ok: true; price: number; via: string } | { ok: false; error: string }> {
+  const res = await fetch("https://mempool.space/api/v1/prices", {
+    headers: { "User-Agent": USER_AGENT, Accept: "application/json" },
+  });
+  if (!res.ok) return { ok: false, error: `Bitcoin price service failed (${res.status}).` };
+  const prices = (await res.json()) as Record<string, number>;
+
+  if (typeof prices[fiat] === "number") {
+    return { ok: true, price: prices[fiat], via: "mempool.space" };
+  }
+  const usd = prices.USD;
+  if (typeof usd !== "number") return { ok: false, error: "Bitcoin price unavailable." };
+
+  const bridged = await convertCurrency({ amount: usd, from: "USD", to: fiat });
+  if (!bridged.ok || typeof bridged.result !== "number") {
+    return { ok: false, error: `Could not price bitcoin in ${fiat}.` };
+  }
+  return { ok: true, price: bridged.result, via: "mempool.space USD + exchangerate-api.com" };
+}
+
+async function bitcoinConvert(amount: number, fromRaw: string, toRaw: string) {
+  const from = fromRaw.trim().toUpperCase();
+  const to = toRaw.trim().toUpperCase();
+  if (!Number.isFinite(amount) || amount < 0) return { ok: false, error: "amount must be a non-negative number." };
+  const isBtcUnit = (u: string) => u === "BTC" || u === "SATS" || u === "SAT";
+  if (!isBtcUnit(from) && !isBtcUnit(to)) {
+    return { ok: false, error: "One side must be BTC or SATS. For fiat-to-fiat use convert_currency." };
+  }
+
+  const toBtc = (value: number, unit: string) => (unit === "BTC" ? value : value / SATS_PER_BTC);
+  const fromBtc = (btc: number, unit: string) => (unit === "BTC" ? btc : btc * SATS_PER_BTC);
+
+  // BTC/SATS <-> BTC/SATS
+  if (isBtcUnit(from) && isBtcUnit(to)) {
+    const result = fromBtc(toBtc(amount, from), to);
+    return { ok: true, amount, from, to, result };
+  }
+
+  const fiat = isBtcUnit(from) ? to : from;
+  if (!/^[A-Z]{3}$/.test(fiat)) return { ok: false, error: `Invalid currency code: ${fiat}` };
+  const priced = await bitcoinPrice(fiat);
+  if (!priced.ok) return priced;
+
+  if (isBtcUnit(from)) {
+    const btc = toBtc(amount, from);
+    const result = Math.round(btc * priced.price * 100) / 100;
+    return { ok: true, amount, from, to, result, btc_price: { [fiat]: priced.price }, source: priced.via };
+  }
+
+  const btc = amount / priced.price;
+  const result = to === "BTC" ? btc : Math.round(btc * SATS_PER_BTC);
+  return {
+    ok: true,
+    amount,
+    from,
+    to,
+    result,
+    btc_price: { [fiat]: priced.price },
+    sats_per_unit: Math.round(SATS_PER_BTC / priced.price),
+    source: priced.via,
+  };
 }
 
 // ---- small HTML helpers -----------------------------------------------------

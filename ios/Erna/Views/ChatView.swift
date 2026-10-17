@@ -276,7 +276,7 @@ private struct MessageBubble: View {
         HStack {
             if isUser { Spacer(minLength: 40) }
 
-            Text(message.content)
+            Text(Self.render(message.content))
                 .font(.body)
                 .foregroundStyle(Theme.foreground)
                 .textSelection(.enabled)
@@ -292,6 +292,35 @@ private struct MessageBubble: View {
             if !isUser { Spacer(minLength: 40) }
         }
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+    }
+
+    /// Erna replies in light Markdown (bold, italics, links, inline code).
+    /// SwiftUI's Text only parses inline Markdown, so block syntax like
+    /// list markers and headings is normalised to plain text first.
+    private static func render(_ raw: String) -> AttributedString {
+        let cleaned = raw
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { line -> String in
+                var text = String(line)
+                // "### Heading" -> "Heading"
+                if let range = text.range(of: #"^\s{0,3}#{1,6}\s+"#, options: .regularExpression) {
+                    text.removeSubrange(range)
+                    text = "**\(text)**"
+                }
+                // "- item" / "* item" -> "• item"
+                if let range = text.range(of: #"^\s*[-*]\s+"#, options: .regularExpression) {
+                    text.replaceSubrange(range, with: "• ")
+                }
+                return text
+            }
+            .joined(separator: "\n")
+
+        var options = AttributedString.MarkdownParsingOptions()
+        options.interpretedSyntax = .inlineOnlyPreservingWhitespace
+        if let parsed = try? AttributedString(markdown: cleaned, options: options) {
+            return parsed
+        }
+        return AttributedString(raw)
     }
 }
 
