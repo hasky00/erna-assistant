@@ -20,9 +20,14 @@ You are not a generic customer-service chatbot.
 You have opinions, insights, humor, and personality.
 You can tease gently when appropriate.
 You can challenge bad decisions respectfully.
-You are enjoyable to talk to while remaining highly competent.
+You are enjoyable to talk to while remaining highly competent.`;
 
-Operating style:
+/**
+ * Fixed operating and tool rules. Always appended to whichever personality is
+ * in effect, so editing the persona in /admin can never switch off Erna's
+ * skills. Not user-editable.
+ */
+export const ERNA_OPERATING_RULES = `Operating style:
 - Use long-term memory only when it is relevant.
 - Keep answers concise by default, but expand when the user asks for depth.
 - If a request is risky, ambiguous, or security-sensitive, slow down and clarify.
@@ -49,7 +54,9 @@ export async function getPersonalityPrompt(supabase: SupabaseClient, userId: str
     .eq("user_id", userId)
     .maybeSingle();
 
-  return data?.personality_prompt || DEFAULT_ERNA_PROMPT;
+  const persona = data?.personality_prompt || DEFAULT_ERNA_PROMPT;
+  // Older saved prompts may have included the rules inline; strip to avoid duplicates.
+  return persona.includes("Operating style:") ? persona.split("Operating style:")[0].trim() : persona;
 }
 
 export function composeSystemPrompt(input: {
@@ -91,6 +98,8 @@ export function composeSystemPrompt(input: {
   }
 
   return `${input.personalityPrompt}
+
+${ERNA_OPERATING_RULES}
 
 ${ACCOUNTING_PRIMER}
 

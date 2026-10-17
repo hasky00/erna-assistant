@@ -166,12 +166,3 @@ struct CreateNoteBody: Encodable {
     let body: String
     let source_url: String?
 }
-
-// MARK: - Personality prompt
-
-struct PromptResponse: Decodable {
-    let personalityPrompt: String
-    let defaultPrompt: String
-}
-
-struct UpdatePromptBody: Encodable { let personalityPrompt: String }
