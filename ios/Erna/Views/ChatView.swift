@@ -1,5 +1,7 @@
 import SwiftUI
 import Observation
+import PhotosUI
+import UniformTypeIdentifiers
 
 @MainActor
 @Observable
@@ -15,6 +17,14 @@ final class ChatViewModel {
     var isSending = false
     var errorMessage: String?
 
+    /// Pending attachment for the next message (one at a time in v1).
+    var attachment: ChatAttachment?
+    /// Attachment that travelled with the last sent message, kept for retry.
+    private var inFlightAttachment: ChatAttachment?
+
+    /// Keep well under the server's ~4.5 MB cap once base64 adds a third.
+    static let maxAttachmentBytes = 3_500_000
+
     var conversationId: String?
     var conversations: [Conversation] = []
     var hasMoreConversations = false
@@ -28,7 +38,8 @@ final class ChatViewModel {
     }
 
     var canSend: Bool {
-        !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isSending
+        let hasText = !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return (hasText || attachment != nil) && !isSending
     }
 
     /// True when the last turn failed and the user's message is still unanswered.
@@ -39,12 +50,82 @@ final class ChatViewModel {
     // MARK: - Sending
 
     func send() async {
-        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !isSending else { return }
+        var trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard canSend else { return }
+
+        // The server requires non-empty text; an attachment alone gets a stub.
+        if trimmed.isEmpty, let attachment {
+            trimmed = attachment.isPDF ? "What is in this document?" : "What do you see in this image?"
+        }
 
         input = ""
-        messages.append(ChatMessage(role: .user, content: trimmed))
+        inFlightAttachment = attachment
+        attachment = nil
+
+        let shown = inFlightAttachment.map { "\(trimmed)\n\n[attached: \($0.name)]" } ?? trimmed
+        messages.append(ChatMessage(role: .user, content: shown))
         await deliver()
+    }
+
+    // MARK: - Attachments
+
+    func attach(photo item: PhotosPickerItem?) async {
+        guard let item else { return }
+        do {
+            guard let data = try await item.loadTransferable(type: Data.self) else { return }
+            guard let image = UIImage(data: data) else {
+                errorMessage = "That image couldn't be read."
+                return
+            }
+            attachment = Self.compress(image, name: "photo.jpg")
+        } catch {
+            errorMessage = "Couldn't load that photo."
+        }
+    }
+
+    func attach(fileAt url: URL) {
+        let secured = url.startAccessingSecurityScopedResource()
+        defer { if secured { url.stopAccessingSecurityScopedResource() } }
+
+        do {
+            let data = try Data(contentsOf: url)
+            let type = UTType(filenameExtension: url.pathExtension) ?? .data
+            if type.conforms(to: .pdf) {
+                guard data.count <= Self.maxAttachmentBytes else {
+                    errorMessage = "That PDF is too large (max \(Self.maxAttachmentBytes / 1_000_000) MB)."
+                    return
+                }
+                attachment = ChatAttachment(name: url.lastPathComponent, mediaType: "application/pdf", data: data)
+            } else if type.conforms(to: .image), let image = UIImage(data: data) {
+                attachment = Self.compress(image, name: url.lastPathComponent)
+            } else {
+                errorMessage = "Only images and PDFs are supported."
+            }
+        } catch {
+            errorMessage = "Couldn't read that file."
+        }
+    }
+
+    func removeAttachment() {
+        attachment = nil
+    }
+
+    /// Downscale and re-encode as JPEG until it fits the size budget.
+    private static func compress(_ image: UIImage, name: String) -> ChatAttachment? {
+        var working = image
+        let maxSide: CGFloat = 2048
+        let longest = max(image.size.width, image.size.height)
+        if longest > maxSide, let scaled = image.resized(longestSide: maxSide) {
+            working = scaled
+        }
+
+        for quality in stride(from: 0.85, through: 0.4, by: -0.15) {
+            if let data = working.jpegData(compressionQuality: quality), data.count <= maxAttachmentBytes {
+                let base = (name as NSString).deletingPathExtension
+                return ChatAttachment(name: "\(base).jpg", mediaType: "image/jpeg", data: data)
+            }
+        }
+        return nil
     }
 
     func retry() async {
@@ -64,8 +145,13 @@ final class ChatViewModel {
         do {
             let response: ChatResponse = try await api.post(
                 "/api/chat",
-                body: ChatRequest(conversationId: conversationId, messages: payload)
+                body: ChatRequest(
+                    conversationId: conversationId,
+                    messages: payload,
+                    attachments: inFlightAttachment.map { [$0] }
+                )
             )
+            inFlightAttachment = nil
             conversationId = response.conversationId
             messages.append(response.message)
             await loadConversations()
@@ -132,6 +218,9 @@ struct ChatView: View {
     @Environment(AppServices.self) private var services
     @State private var model: ChatViewModel?
     @State private var showingHistory = false
+    @State private var showingPhotoPicker = false
+    @State private var showingFilePicker = false
+    @State private var pickedPhoto: PhotosPickerItem?
 
     var body: some View {
         NavigationStack {
@@ -238,31 +327,124 @@ struct ChatView: View {
     private func composer(_ model: ChatViewModel) -> some View {
         @Bindable var model = model
 
-        return HStack(alignment: .bottom, spacing: 10) {
-            TextField("Message Erna", text: $model.input, axis: .vertical)
-                .lineLimit(1...5)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .foregroundStyle(Theme.foreground)
-                .panel(strong: true)
-
-            Button {
-                Task { await model.send() }
-            } label: {
-                Image(systemName: "arrow.up")
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(Theme.background)
-                    .frame(width: 38, height: 38)
-                    .background(model.canSend ? Theme.accent : Theme.accentMuted)
-                    .clipShape(Circle())
+        return VStack(spacing: 8) {
+            if let attachment = model.attachment {
+                AttachmentChip(attachment: attachment) { model.removeAttachment() }
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .disabled(!model.canSend)
+
+            HStack(alignment: .bottom, spacing: 10) {
+                Menu {
+                    Button {
+                        showingPhotoPicker = true
+                    } label: {
+                        Label("Photo", systemImage: "photo")
+                    }
+                    Button {
+                        showingFilePicker = true
+                    } label: {
+                        Label("File (PDF or image)", systemImage: "doc")
+                    }
+                } label: {
+                    Image(systemName: "paperclip")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(Theme.accent)
+                        .frame(width: 38, height: 38)
+                        .panel(strong: true)
+                }
+                .disabled(model.isSending)
+
+                TextField("Message Erna", text: $model.input, axis: .vertical)
+                    .lineLimit(1...5)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .foregroundStyle(Theme.foreground)
+                    .panel(strong: true)
+
+                Button {
+                    Task { await model.send() }
+                } label: {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(Theme.background)
+                        .frame(width: 38, height: 38)
+                        .background(model.canSend ? Theme.accent : Theme.accentMuted)
+                        .clipShape(Circle())
+                }
+                .disabled(!model.canSend)
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(Theme.background)
         .overlay(alignment: .top) {
             Rectangle().fill(Theme.border).frame(height: 1)
+        }
+        .photosPicker(isPresented: $showingPhotoPicker, selection: $pickedPhoto, matching: .images)
+        .onChange(of: pickedPhoto) { _, item in
+            Task {
+                await model.attach(photo: item)
+                pickedPhoto = nil
+            }
+        }
+        .fileImporter(
+            isPresented: $showingFilePicker,
+            allowedContentTypes: [.pdf, .image],
+            allowsMultipleSelection: false
+        ) { result in
+            if case .success(let urls) = result, let url = urls.first {
+                model.attach(fileAt: url)
+            }
+        }
+    }
+}
+
+private struct AttachmentChip: View {
+    let attachment: ChatAttachment
+    let remove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if !attachment.isPDF, let image = UIImage(data: attachment.data) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 28, height: 28)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            } else {
+                Image(systemName: "doc.richtext")
+                    .foregroundStyle(Theme.accent)
+            }
+
+            Text(attachment.name)
+                .font(.footnote)
+                .foregroundStyle(Theme.foreground)
+                .lineLimit(1)
+
+            Text(ByteCountFormatter.string(fromByteCount: Int64(attachment.data.count), countStyle: .file))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            Button(action: remove) {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .panel(strong: true)
+    }
+}
+
+private extension UIImage {
+    func resized(longestSide: CGFloat) -> UIImage? {
+        let scale = longestSide / max(size.width, size.height)
+        let target = CGSize(width: size.width * scale, height: size.height * scale)
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: target, format: format).image { _ in
+            draw(in: CGRect(origin: .zero, size: target))
         }
     }
 }

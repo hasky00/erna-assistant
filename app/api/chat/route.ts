@@ -17,6 +17,17 @@ const MAX_OUTPUT_TOKENS = 2048;
 // A chat turn can run several tool round trips; let the serverless function live long enough.
 export const maxDuration = 120;
 
+const IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"] as const;
+const MAX_ATTACHMENT_BYTES = 4_500_000; // Netlify function body cap is ~6 MB; base64 adds a third.
+
+const attachmentSchema = z.object({
+  name: z.string().min(1).max(200),
+  media_type: z.enum([...IMAGE_TYPES, "application/pdf"]),
+  data: z.string().min(1).max(Math.ceil((MAX_ATTACHMENT_BYTES * 4) / 3) + 4), // base64
+});
+
+export type ChatAttachment = z.infer<typeof attachmentSchema>;
+
 const requestSchema = z.object({
   conversationId: z.string().uuid().optional(),
   messages: z
@@ -28,6 +39,9 @@ const requestSchema = z.object({
     )
     .min(1)
     .max(20),
+  // Attached to the *last* user message only. Earlier attachments live on as a
+  // "[attached: name]" note in history, not as bytes.
+  attachments: z.array(attachmentSchema).max(3).optional(),
 });
 
 export async function POST(request: Request) {
@@ -53,11 +67,19 @@ export async function POST(request: Request) {
       getOrCreateConversation(supabase, user.id, parsed.data.conversationId, lastUserMessage.content),
     ]);
 
+    const attachments = parsed.data.attachments ?? [];
+    const attachmentNote = attachments.length
+      ? `\n\n[attached: ${attachments.map((a) => a.name).join(", ")}]`
+      : "";
+
     await supabase.from("messages").insert({
       conversation_id: conversationId,
       user_id: user.id,
       role: "user",
-      content: lastUserMessage.content,
+      content: lastUserMessage.content + attachmentNote,
+      metadata: attachments.length
+        ? { attachments: attachments.map((a) => ({ name: a.name, media_type: a.media_type })) }
+        : null,
     });
 
     // Bump conversation activity timestamp so lists ordered by updated_at work
@@ -72,6 +94,7 @@ export async function POST(request: Request) {
     // Anthropic requires strictly alternating user/assistant turns starting
     // with a user turn; merge any accidental repeats from the client.
     const messages: Anthropic.MessageParam[] = normalizeHistory(parsed.data.messages);
+    if (attachments.length) attachToLastUserTurn(messages, attachments);
 
     const anthropic = getAnthropic();
     const model = getAnthropicModel();
@@ -178,6 +201,27 @@ function normalizeHistory(
   }
   while (out.length && out[0].role !== "user") out.shift();
   return out;
+}
+
+/** Turn uploaded files into Claude image/document blocks on the final user turn. */
+function attachToLastUserTurn(messages: Anthropic.MessageParam[], attachments: ChatAttachment[]) {
+  const last = messages[messages.length - 1];
+  if (!last || last.role !== "user" || typeof last.content !== "string") return;
+
+  const blocks: Anthropic.ContentBlockParam[] = attachments.map((a) =>
+    a.media_type === "application/pdf"
+      ? {
+          type: "document",
+          source: { type: "base64", media_type: "application/pdf", data: a.data },
+          title: a.name,
+        }
+      : {
+          type: "image",
+          source: { type: "base64", media_type: a.media_type, data: a.data },
+        },
+  );
+  blocks.push({ type: "text", text: last.content });
+  last.content = blocks;
 }
 
 function extractText(content: Anthropic.ContentBlock[]) {

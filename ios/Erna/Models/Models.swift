@@ -48,9 +48,34 @@ struct ToolResult: Decodable {
     let name: String
 }
 
+/// A file the user attaches to one message. Sent base64-encoded alongside the
+/// text; Claude reads images and PDFs natively.
+struct ChatAttachment: Encodable, Identifiable, Equatable {
+    let id = UUID()
+    let name: String
+    let mediaType: String
+    let data: Data
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case mediaType = "media_type"
+        case data
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(name, forKey: .name)
+        try container.encode(mediaType, forKey: .mediaType)
+        try container.encode(data.base64EncodedString(), forKey: .data)
+    }
+
+    var isPDF: Bool { mediaType == "application/pdf" }
+}
+
 struct ChatRequest: Encodable {
     let conversationId: String?
     let messages: [ChatMessage]
+    var attachments: [ChatAttachment]? = nil
 }
 
 struct ChatResponse: Decodable {
