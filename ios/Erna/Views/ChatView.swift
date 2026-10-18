@@ -212,6 +212,30 @@ final class ChatViewModel {
             errorMessage = error.localizedDescription
         }
     }
+
+    /// Deletes one conversation (and its messages) on the server. Optimistic:
+    /// the row disappears at once and comes back if the request fails.
+    /// Long-term memories are untouched.
+    func delete(_ conversation: Conversation) async {
+        let snapshot = conversations
+        conversations.removeAll { $0.id == conversation.id }
+        if conversationId == conversation.id { newChat() }
+
+        do {
+            try await api.delete("/api/conversations/\(conversation.id)")
+        } catch {
+            conversations = snapshot
+            conversationsError = error.localizedDescription
+        }
+    }
+
+    /// Clears the whole chat history on the server and starts a fresh chat.
+    func clearHistory() async throws {
+        try await api.delete("/api/conversations")
+        conversations = []
+        hasMoreConversations = false
+        newChat()
+    }
 }
 
 struct ChatView: View {
@@ -531,6 +555,8 @@ private struct TypingIndicator: View {
 private struct ConversationHistoryView: View {
     @Bindable var model: ChatViewModel
     @Environment(\.dismiss) private var dismiss
+    @State private var showingClearAll = false
+    @State private var isClearing = false
 
     var body: some View {
         NavigationStack {
@@ -561,6 +587,13 @@ private struct ConversationHistoryView: View {
                         }
                     }
                     .listRowBackground(Theme.panel)
+                    .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) {
+                            Task { await model.delete(conversation) }
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
                 }
 
                 if model.hasMoreConversations {
@@ -582,12 +615,36 @@ private struct ConversationHistoryView: View {
             .navigationTitle("History")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Clear all", role: .destructive) { showingClearAll = true }
+                        .disabled(model.conversations.isEmpty || isClearing)
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
                 }
             }
+            .confirmationDialog(
+                "Delete all conversations?",
+                isPresented: $showingClearAll,
+                titleVisibility: .visible
+            ) {
+                Button("Delete all history", role: .destructive) {
+                    Task {
+                        isClearing = true
+                        defer { isClearing = false }
+                        do {
+                            try await model.clearHistory()
+                        } catch {
+                            model.conversationsError = error.localizedDescription
+                        }
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This removes every chat and its messages. What Erna has learned about you (memories, tasks, notes) is kept.")
+            }
             .overlay {
-                if model.isLoadingConversations && model.conversations.isEmpty {
+                if (model.isLoadingConversations && model.conversations.isEmpty) || isClearing {
                     ProgressView().tint(Theme.accent)
                 }
             }

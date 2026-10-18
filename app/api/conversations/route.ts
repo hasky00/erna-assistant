@@ -42,3 +42,23 @@ export async function GET(request: Request) {
     return safeError(error, "Failed to load conversations");
   }
 }
+
+// Clears the user's entire chat history. Messages cascade with their
+// conversations; memories, tasks and notes are untouched.
+export async function DELETE(request: Request) {
+  try {
+    const { supabase, user } = await authenticate(request);
+
+    const { data, error } = await supabase
+      .from("conversations")
+      .delete()
+      .eq("user_id", user.id)
+      .select("id");
+
+    if (error) throw error;
+
+    return NextResponse.json({ ok: true, deleted: data?.length ?? 0 });
+  } catch (error) {
+    return safeError(error, "Failed to clear history");
+  }
+}
