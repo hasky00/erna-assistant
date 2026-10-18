@@ -95,6 +95,43 @@ export function ChatShell() {
     }
   }, [loading, loadingConvId]);
 
+  // Delete one conversation (messages cascade server-side; memories untouched).
+  async function deleteConversation(id: string) {
+    if (!window.confirm("Delete this conversation?")) return;
+    const snapshot = conversations;
+    setConversations((prev) => prev.filter((c) => c.id !== id));
+    if (conversationId === id) newChat();
+
+    try {
+      const res = await fetch(`/api/conversations/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const p = await res.json().catch(() => ({}));
+        throw new Error(p.error || "Failed to delete conversation");
+      }
+    } catch (e) {
+      setConversations(snapshot);
+      setListError(e instanceof Error ? e.message : "Failed to delete conversation");
+    }
+  }
+
+  // Clear the whole history. Memories, tasks and notes are kept.
+  async function clearHistory() {
+    if (!window.confirm("Delete all conversations? What Erna has learned about you (memories, tasks, notes) is kept.")) return;
+    setListError("");
+    try {
+      const res = await fetch("/api/conversations", { method: "DELETE" });
+      if (!res.ok) {
+        const p = await res.json().catch(() => ({}));
+        throw new Error(p.error || "Failed to clear history");
+      }
+      setConversations([]);
+      setHasMoreConvos(false);
+      newChat();
+    } catch (e) {
+      setListError(e instanceof Error ? e.message : "Failed to clear history");
+    }
+  }
+
   // Start a brand new chat (clear state). Does not hit the server until first message.
   function newChat() {
     if (loading) return;
@@ -217,19 +254,29 @@ export function ChatShell() {
               const isActive = conv.id === conversationId;
               const isLoadingThis = loadingConvId === conv.id;
               return (
-                <button
-                  key={conv.id}
-                  onClick={() => loadConversation(conv.id)}
-                  disabled={!!loadingConvId || loading}
-                  className={`mb-1 w-full rounded-md border px-3 py-2 text-left transition ${
-                    isActive
-                      ? "border-[var(--accent)] bg-[rgba(242,184,75,0.12)]"
-                      : "border-transparent hover:border-[var(--border)] hover:bg-[var(--panel-strong)]"
-                  } ${isLoadingThis ? "opacity-60" : ""}`}
-                >
-                  <div className="truncate font-medium">{conv.title || "Untitled chat"}</div>
-                  <div className="mt-0.5 text-[10px] text-[var(--muted)]">{formatWhen(conv.updated_at)}</div>
-                </button>
+                <div key={conv.id} className="group relative mb-1">
+                  <button
+                    onClick={() => loadConversation(conv.id)}
+                    disabled={!!loadingConvId || loading}
+                    className={`w-full rounded-md border px-3 py-2 pr-8 text-left transition ${
+                      isActive
+                        ? "border-[var(--accent)] bg-[rgba(242,184,75,0.12)]"
+                        : "border-transparent hover:border-[var(--border)] hover:bg-[var(--panel-strong)]"
+                    } ${isLoadingThis ? "opacity-60" : ""}`}
+                  >
+                    <div className="truncate font-medium">{conv.title || "Untitled chat"}</div>
+                    <div className="mt-0.5 text-[10px] text-[var(--muted)]">{formatWhen(conv.updated_at)}</div>
+                  </button>
+                  <button
+                    onClick={() => deleteConversation(conv.id)}
+                    disabled={loading}
+                    aria-label="Delete conversation"
+                    title="Delete conversation"
+                    className="absolute right-1.5 top-1.5 rounded px-1.5 py-0.5 text-xs text-[var(--muted)] opacity-0 transition hover:bg-[var(--panel-strong)] hover:text-[var(--danger)] focus:opacity-100 group-hover:opacity-100"
+                  >
+                    ×
+                  </button>
+                </div>
               );
             })}
 
@@ -250,8 +297,16 @@ export function ChatShell() {
             {listError && <p className="mt-2 px-2 text-xs text-[var(--danger)]">{listError}</p>}
           </div>
 
-          <div className="border-t border-[var(--border)] p-2 text-[10px] text-[var(--muted)]">
-            Click a conversation to load its history and continue.
+          <div className="flex items-center justify-between border-t border-[var(--border)] p-2 text-[10px] text-[var(--muted)]">
+            <span>Click a conversation to continue it.</span>
+            <button
+              onClick={clearHistory}
+              disabled={loading || conversations.length === 0}
+              className="rounded border border-[var(--border)] px-2 py-0.5 text-[10px] hover:border-[var(--danger)] hover:text-[var(--danger)] disabled:opacity-40"
+              title="Delete every conversation (memories, tasks and notes are kept)"
+            >
+              Clear all
+            </button>
           </div>
         </div>
 
