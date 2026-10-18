@@ -3,7 +3,7 @@ import Foundation
 /// Build-time configuration, injected from `Config/Secrets.xcconfig` into
 /// Info.plist. Nothing secret lives here: the Supabase publishable key is the
 /// same value the web bundle already ships, and row level security is what
-/// actually protects data. The OpenAI key stays server-side in the Next.js app.
+/// actually protects data. The Anthropic key stays server-side in the Next.js app.
 enum Config {
     static let apiBaseURL = url(for: "ERNA_API_BASE_URL")
     static let supabaseURL = url(for: "ERNA_SUPABASE_URL")

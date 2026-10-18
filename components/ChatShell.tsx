@@ -97,6 +97,7 @@ export function ChatShell() {
 
   // Delete one conversation (messages cascade server-side; memories untouched).
   async function deleteConversation(id: string) {
+    if (loading) return; // never delete the chat Erna is replying into
     if (!window.confirm("Delete this conversation?")) return;
     const snapshot = conversations;
     setConversations((prev) => prev.filter((c) => c.id !== id));
@@ -116,6 +117,7 @@ export function ChatShell() {
 
   // Clear the whole history. Memories, tasks and notes are kept.
   async function clearHistory() {
+    if (loading) return;
     if (!window.confirm("Delete all conversations? What Erna has learned about you (memories, tasks, notes) is kept.")) return;
     setListError("");
     try {

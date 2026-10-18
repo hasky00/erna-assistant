@@ -190,13 +190,18 @@ export async function POST(request: Request) {
       finalContent = "I ran the tool work, but couldn't turn it into an answer. The changes above were saved — ask me again and I'll summarize them.";
     }
 
-    await supabase.from("messages").insert({
+    const { error: assistantInsertError } = await supabase.from("messages").insert({
       conversation_id: conversationId,
       user_id: user.id,
       role: "assistant",
       content: finalContent,
       metadata: { toolResults, model },
     });
+    if (assistantInsertError) {
+      // The conversation may have been deleted mid-turn. Still return the
+      // reply, but log it so the gap in history is explainable.
+      console.error("[erna] failed to store assistant message", assistantInsertError.message);
+    }
 
     // Bump again after assistant reply
     await supabase
@@ -327,25 +332,21 @@ function normalizeChatError(error: unknown) {
   if (typeof error === "object" && error && "status" in error) {
     const status = Number((error as { status?: unknown }).status);
 
+    // Operator details go to the server log; the person in the app gets a
+    // plain sentence they can act on.
     if (status === 429) {
-      return {
-        status: 429,
-        message: "Anthropic rate limit or credit limit reached. Check the Anthropic console for this API key's usage and billing.",
-      };
+      console.error("[erna] Anthropic 429: rate or credit limit reached for this API key.");
+      return { status: 503, message: "Erna is busy right now. Try again in a minute." };
     }
 
     if (status === 401) {
-      return {
-        status: 401,
-        message: "Anthropic rejected the API key. Check ANTHROPIC_API_KEY in the server environment.",
-      };
+      console.error("[erna] Anthropic 401: ANTHROPIC_API_KEY was rejected.");
+      return { status: 503, message: "Erna is having trouble on the server. Try again shortly." };
     }
 
     if (status === 404) {
-      return {
-        status: 500,
-        message: `Model "${getAnthropicModel()}" was not found. Check ANTHROPIC_MODEL.`,
-      };
+      console.error(`[erna] Anthropic 404: model "${getAnthropicModel()}" not found. Check ANTHROPIC_MODEL.`);
+      return { status: 503, message: "Erna is having trouble on the server. Try again shortly." };
     }
   }
 
