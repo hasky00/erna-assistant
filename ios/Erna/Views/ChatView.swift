@@ -217,6 +217,8 @@ final class ChatViewModel {
     /// the row disappears at once and comes back if the request fails.
     /// Long-term memories are untouched.
     func delete(_ conversation: Conversation) async {
+        // Deleting the chat Erna is replying into would orphan her answer.
+        guard !isSending else { return }
         let snapshot = conversations
         conversations.removeAll { $0.id == conversation.id }
         if conversationId == conversation.id { newChat() }
@@ -231,6 +233,7 @@ final class ChatViewModel {
 
     /// Clears the whole chat history on the server and starts a fresh chat.
     func clearHistory() async throws {
+        guard !isSending else { return }
         try await api.delete("/api/conversations")
         conversations = []
         hasMoreConversations = false
@@ -587,12 +590,13 @@ private struct ConversationHistoryView: View {
                         }
                     }
                     .listRowBackground(Theme.panel)
-                    .swipeActions(edge: .trailing) {
+                    .swipeActions(edge: .trailing, allowsFullSwipe: !model.isSending) {
                         Button(role: .destructive) {
                             Task { await model.delete(conversation) }
                         } label: {
                             Label("Delete", systemImage: "trash")
                         }
+                        .disabled(model.isSending)
                     }
                 }
 
@@ -617,7 +621,7 @@ private struct ConversationHistoryView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Clear all", role: .destructive) { showingClearAll = true }
-                        .disabled(model.conversations.isEmpty || isClearing)
+                        .disabled(model.conversations.isEmpty || isClearing || model.isSending)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }

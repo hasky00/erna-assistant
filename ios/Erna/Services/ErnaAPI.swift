@@ -141,7 +141,8 @@ final class ErnaAPI {
         switch status {
         case 401: return "Your session expired. Sign in again."
         case 404: return "Not found."
-        case 429: return "Rate limited or out of OpenAI quota. Try again shortly."
+        case 429: return "Erna is busy right now. Try again shortly."
+        case 503: return "Erna is having trouble on the server. Try again shortly."
         default: return "Request failed (\(status))."
         }
     }

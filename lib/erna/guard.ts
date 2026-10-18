@@ -39,6 +39,12 @@ export function isAllowedNpub(npub: string) {
   return npubs.includes(npub.toLowerCase());
 }
 
+/** Friendly 403 text: tells the tester what to do, and which address to send. */
+export function notOnGuestListMessage(user: User) {
+  const who = user.email || "your account";
+  return `${who} isn't on Erna's guest list yet. Ask Erna's owner to add you, then try again.`;
+}
+
 export function isAllowedUser(user: User) {
   if (!allowlistConfigured()) {
     console.warn("[erna] ERNA_ALLOWED_EMAILS / ERNA_ALLOWED_NPUBS not set — anyone with an account can use Erna.");
@@ -77,7 +83,7 @@ export async function authenticate(request: Request): Promise<{ supabase: Supaba
   } = await supabase.auth.getUser();
 
   if (error || !user) throw new AuthError(401, "Unauthorized");
-  if (!isAllowedUser(user)) throw new AuthError(403, "This Erna belongs to someone else.");
+  if (!isAllowedUser(user)) throw new AuthError(403, notOnGuestListMessage(user));
   return { supabase, user };
 }
 
