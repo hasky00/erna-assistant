@@ -17,6 +17,13 @@ Included server-side tools:
 - `update_preferences`: updates the user's saved preferences object.
 - `web_search`: optional Tavily-backed search when `TAVILY_API_KEY` is configured.
 - `integration_status`: reports optional calendar, email, and task provider connections.
+- `wikipedia_lookup`, `fetch_url`, `calculate`, `bitcoin_convert`, `set_timezone`, `current_datetime`, `bookkeeping_rule`: knowledge and utility tools, no configuration.
+- `plan_journey_dk`: A-to-B public transport journeys in Denmark (train, S-train, metro, bus, light rail) with live times via Rejseplanen. Logic in `lib/erna/rejseplanen.ts`.
+- `departures_dk`: live departure board for a Danish station or stop via Rejseplanen.
+- `find_stop_dk`: resolves Danish stop/station/address names via Rejseplanen.
+
+The Rejseplanen tools need `REJSEPLANEN_ACCESS_ID` (free key from https://labs.rejseplan.dk).
+Without it they return `ok: false` and Erna says live times are unavailable.
 
 Task management, knowledge-base, and currency tools require no extra configuration.
 The system prompt now also injects the current date/time in the user's timezone so
