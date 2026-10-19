@@ -101,6 +101,8 @@ final class ErnaAPI {
         request.httpMethod = method
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        // Erna follows the phone's timezone unless the user picked one explicitly.
+        request.setValue(TimeZone.current.identifier, forHTTPHeaderField: "X-Erna-Timezone")
         if let body {
             request.httpBody = body
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")

@@ -1,3 +1,4 @@
+import { formatInZone } from "@/lib/erna/time";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { UserProfile, Memory, Task } from "@/lib/erna/types";
 import { ACCOUNTING_PRIMER } from "@/lib/erna/accounting";
@@ -95,11 +96,16 @@ export function composeSystemPrompt(input: {
     ? input.memories.map((memory) => `- [${memory.category}, ${memory.importance}/5] ${memory.content}`).join("\n")
     : "No relevant memories found.";
 
+  const timezone = input.profile?.timezone || DEFAULT_TIMEZONE;
   const tasks = input.tasks.length
-    ? input.tasks.map((task) => `- ${task.title}${task.due_at ? ` due ${task.due_at}` : ""} (${task.status})`).join("\n")
+    ? input.tasks
+        .map((task) => {
+          const due = formatInZone(task.due_at, timezone);
+          return `- ${task.title}${due ? ` due ${due}` : ""} (${task.status})`;
+        })
+        .join("\n")
     : "No open tasks.";
 
-  const timezone = input.profile?.timezone || DEFAULT_TIMEZONE;
   let currentTime: string;
   try {
     currentTime = new Intl.DateTimeFormat("en-GB", {
@@ -118,8 +124,9 @@ export function composeSystemPrompt(input: {
     .join("\n\n");
 
   const dynamicBlock = `Current date and time: ${currentTime} (user timezone: ${timezone}).
-When creating or rescheduling tasks, resolve relative dates like "tomorrow" against this.
-If the user mentions living somewhere else or times look wrong, call set_timezone.
+All times you say to the user must be in this timezone, written like "Sat 25 Oct, 09:00". Tool results carry *_local fields already in this zone: quote those, never raw ISO/UTC timestamps.
+When creating or rescheduling tasks, resolve relative dates like "tomorrow" against this and pass due_at with the user's UTC offset.
+The app sends the phone's timezone automatically; only call set_timezone if the user explicitly asks for a different one.
 
 Private context:
 
