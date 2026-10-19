@@ -41,6 +41,7 @@ create table if not exists public.memories (
   category text not null default 'general',
   importance int not null default 3 check (importance between 1 and 5),
   source text not null default 'chat',
+  conversation_id uuid references public.conversations(id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

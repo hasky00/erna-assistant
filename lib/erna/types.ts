@@ -15,7 +15,15 @@ export type Memory = {
   content: string;
   category: string;
   importance: number;
+  source?: string;
+  conversation_id?: string | null;
   created_at: string;
+  updated_at?: string;
+};
+
+/** A memory with the title of the chat it came from, for the Memory page. */
+export type MemoryWithOrigin = Memory & {
+  conversation_title: string | null;
 };
 
 export type Task = {
