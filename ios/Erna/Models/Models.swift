@@ -159,6 +159,43 @@ struct Note: Codable, Identifiable, Equatable {
 }
 
 struct NotesResponse: Decodable { let notes: [Note] }
+
+// MARK: - Memory (what Erna knows about you)
+
+struct Memory: Codable, Identifiable, Equatable {
+    let id: String
+    var content: String
+    var category: String
+    var importance: Int
+    var source: String?
+    var conversationId: String?
+    /// Title of the chat this memory came from, when it is still around.
+    var conversationTitle: String?
+    var createdAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case id, content, category, importance, source
+        case conversationId = "conversation_id"
+        case conversationTitle = "conversation_title"
+        case createdAt = "created_at"
+    }
+
+    /// "You told me on 12 Oct in 'Kizami waitlist'" — provenance in one line.
+    var originLine: String {
+        var parts: [String] = []
+        if let createdAt {
+            parts.append("You told me on " + createdAt.formatted(.dateTime.day().month(.abbreviated).year()))
+        }
+        if let title = conversationTitle, !title.isEmpty {
+            parts.append("in \u{201C}\(title)\u{201D}")
+        }
+        return parts.isEmpty ? "Origin unknown" : parts.joined(separator: " ")
+    }
+}
+
+struct MemoriesResponse: Decodable { let memories: [Memory] }
+struct MemoryResponse: Decodable { let memory: Memory }
+struct UpdateMemoryBody: Encodable { let content: String }
 struct NoteResponse: Decodable { let note: Note }
 
 struct CreateNoteBody: Encodable {

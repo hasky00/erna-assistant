@@ -301,6 +301,8 @@ export async function runTool(input: {
   name: string;
   argumentsText: string;
   timezone?: string | null;
+  /** The chat this tool call happens in; stored on new memories for provenance. */
+  conversationId?: string | null;
 }) {
   const args = parseToolArgs(input.argumentsText);
 
@@ -312,6 +314,7 @@ export async function runTool(input: {
       typeof args.category === "string" ? args.category : "general",
       typeof args.importance === "number" ? args.importance : 3,
       "tool",
+      input.conversationId ?? null,
     );
     return { ok: true, memory };
   }

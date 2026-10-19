@@ -159,7 +159,7 @@ export async function POST(request: Request) {
       // Run every requested tool, then hand all results back in one user turn.
       const results: Anthropic.ToolResultBlockParam[] = [];
       for (const toolUse of toolUses) {
-        const result = await executeToolCall(supabase, user.id, toolUse, profile?.timezone);
+        const result = await executeToolCall(supabase, user.id, toolUse, profile?.timezone, conversationId);
         toolResults.push({ name: toolUse.name, result });
         results.push({
           type: "tool_result",
@@ -388,6 +388,7 @@ async function executeToolCall(
   userId: string,
   toolUse: Anthropic.ToolUseBlock,
   timezone?: string | null,
+  conversationId?: string | null,
 ) {
   try {
     return await runTool({
@@ -396,6 +397,7 @@ async function executeToolCall(
       name: toolUse.name,
       argumentsText: JSON.stringify(toolUse.input ?? {}),
       timezone,
+      conversationId,
     });
   } catch (error) {
     return {

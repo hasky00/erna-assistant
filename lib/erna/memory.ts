@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Memory, Task, UserProfile } from "@/lib/erna/types";
+import type { Memory, Task, UserProfile, MemoryWithOrigin } from "@/lib/erna/types";
 
 /** Erna lives in Copenhagen unless the user says otherwise. */
 export const DEFAULT_TIMEZONE = "Europe/Copenhagen";
@@ -51,16 +51,75 @@ export async function saveMemory(
   category = "general",
   importance = 3,
   source = "chat",
+  conversationId: string | null = null,
 ) {
   const safeImportance = Math.min(5, Math.max(1, Math.round(Number(importance) || 3)));
   const { data, error } = await supabase
     .from("memories")
-    .insert({ user_id: userId, content, category, importance: safeImportance, source })
+    .insert({
+      user_id: userId,
+      content,
+      category,
+      importance: safeImportance,
+      source,
+      conversation_id: conversationId,
+    })
     .select("*")
     .single<Memory>();
 
   if (error) throw error;
   return data;
+}
+
+/** Everything Erna remembers about the user, newest first, with the chat each came from. */
+export async function listMemories(supabase: SupabaseClient, userId: string): Promise<MemoryWithOrigin[]> {
+  const { data, error } = await supabase
+    .from("memories")
+    .select("id, content, category, importance, source, conversation_id, created_at, updated_at, conversations(title)")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(500);
+
+  if (error) throw error;
+  return (data || []).map((row) => {
+    const { conversations, ...memory } = row as Memory & {
+      conversations: { title: string } | { title: string }[] | null;
+    };
+    const conv = Array.isArray(conversations) ? conversations[0] : conversations;
+    return { ...memory, conversation_title: conv?.title ?? null };
+  });
+}
+
+export async function updateMemory(
+  supabase: SupabaseClient,
+  userId: string,
+  memoryId: string,
+  patch: { content?: string; category?: string; importance?: number },
+) {
+  const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (typeof patch.content === "string" && patch.content.trim()) update.content = patch.content.trim();
+  if (typeof patch.category === "string" && patch.category) update.category = patch.category;
+  if (typeof patch.importance === "number") {
+    update.importance = Math.min(5, Math.max(1, Math.round(patch.importance)));
+  }
+
+  const { data, error } = await supabase
+    .from("memories")
+    .update(update)
+    .eq("id", memoryId)
+    .eq("user_id", userId)
+    .select("*")
+    .maybeSingle<Memory>();
+
+  if (error) throw error;
+  return data;
+}
+
+/** Forget everything. Returns how many memories were removed. */
+export async function deleteAllMemories(supabase: SupabaseClient, userId: string) {
+  const { data, error } = await supabase.from("memories").delete().eq("user_id", userId).select("id");
+  if (error) throw error;
+  return data?.length ?? 0;
 }
 
 const STOPWORDS = new Set([

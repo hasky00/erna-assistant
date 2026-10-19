@@ -9,7 +9,7 @@ export function AppShell({
   npub,
 }: {
   children: React.ReactNode;
-  active: "chat" | "tasks" | "notes" | "admin";
+  active: "chat" | "tasks" | "notes" | "memory" | "admin";
   email?: string | null;
   /** Set when the user signed in with Nostr; replaces the placeholder email. */
   npub?: string | null;
@@ -18,7 +18,8 @@ export function AppShell({
     { href: "/chat", label: "Chat", key: "chat" },
     { href: "/tasks", label: "Tasks", key: "tasks" },
     { href: "/notes", label: "Notes", key: "notes" },
-    { href: "/admin", label: "Admin", key: "admin" },
+    { href: "/memory", label: "Memory", key: "memory" },
+    { href: "/admin", label: "Personality", key: "admin" },
   ];
   return (
     <main className="min-h-screen bg-[var(--background)] text-[var(--foreground)]">
