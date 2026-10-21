@@ -17,13 +17,23 @@ final class ChatViewModel {
     var isSending = false
     var errorMessage: String?
 
-    /// Pending attachment for the next message (one at a time in v1).
-    var attachment: ChatAttachment?
-    /// Attachment that travelled with the last sent message, kept for retry.
-    private var inFlightAttachment: ChatAttachment?
+    /// Pending attachments for the next message.
+    var attachments: [ChatAttachment] = []
+    /// Attachments that travelled with the last sent message, kept for retry.
+    private var inFlightAttachments: [ChatAttachment] = []
 
-    /// Keep well under the server's ~4.5 MB cap once base64 adds a third.
+    /// How many files can ride on one message. Mirrors the server's limit.
+    static let maxAttachments = 4
+    /// One file's ceiling (a single PDF or photo). Base64 adds a third, and the
+    /// whole request must stay under Netlify's ~6 MB body cap.
     static let maxAttachmentBytes = 3_500_000
+    /// Budget for everything on one message together.
+    static let maxTotalBytes = 3_800_000
+    /// Photos are compressed to this so four of them still fit the total.
+    static let photoBudgetBytes = 900_000
+
+    var canAttachMore: Bool { attachments.count < Self.maxAttachments }
+    var remainingAttachmentSlots: Int { max(0, Self.maxAttachments - attachments.count) }
 
     var conversationId: String?
     var conversations: [Conversation] = []
@@ -39,7 +49,7 @@ final class ChatViewModel {
 
     var canSend: Bool {
         let hasText = !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return (hasText || attachment != nil) && !isSending
+        return (hasText || !attachments.isEmpty) && !isSending
     }
 
     /// True when the last turn failed and the user's message is still unanswered.
@@ -53,37 +63,68 @@ final class ChatViewModel {
         var trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canSend else { return }
 
-        // The server requires non-empty text; an attachment alone gets a stub.
-        if trimmed.isEmpty, let attachment {
-            trimmed = attachment.isPDF ? "What is in this document?" : "What do you see in this image?"
+        // The server requires non-empty text; attachments alone get a stub.
+        if trimmed.isEmpty, let first = attachments.first {
+            if attachments.count > 1 {
+                trimmed = "What do you see in these?"
+            } else {
+                trimmed = first.isPDF ? "What is in this document?" : "What do you see in this image?"
+            }
         }
 
         input = ""
-        inFlightAttachment = attachment
-        attachment = nil
+        inFlightAttachments = attachments
+        attachments = []
 
-        let shown = inFlightAttachment.map { "\(trimmed)\n\n[attached: \($0.name)]" } ?? trimmed
+        let shown = inFlightAttachments.isEmpty
+            ? trimmed
+            : "\(trimmed)\n\n[attached: \(inFlightAttachments.map(\.name).joined(separator: ", "))]"
         messages.append(ChatMessage(role: .user, content: shown))
         await deliver()
     }
 
     // MARK: - Attachments
 
-    func attach(photo item: PhotosPickerItem?) async {
-        guard let item else { return }
-        do {
-            guard let data = try await item.loadTransferable(type: Data.self) else { return }
-            guard let image = UIImage(data: data) else {
-                errorMessage = "That image couldn't be read."
-                return
+    /// Adds several photos at once (the picker allows up to the free slots).
+    func attach(photos items: [PhotosPickerItem]) async {
+        var failed = 0
+        for item in items {
+            guard canAttachMore else { break }
+            do {
+                guard let data = try await item.loadTransferable(type: Data.self),
+                      let image = UIImage(data: data)
+                else { failed += 1; continue }
+                let name = "photo\(attachments.count + 1).jpg"
+                guard let compressed = Self.compress(image, name: name, budget: Self.photoBudgetBytes) else {
+                    failed += 1
+                    continue
+                }
+                add(compressed)
+            } catch {
+                failed += 1
             }
-            attachment = Self.compress(image, name: "photo.jpg")
-        } catch {
-            errorMessage = "Couldn't load that photo."
+        }
+        if failed > 0 {
+            errorMessage = failed == 1 ? "One photo couldn't be loaded." : "\(failed) photos couldn't be loaded."
         }
     }
 
+    /// Appends if it still fits the per-message budget; explains if not.
+    private func add(_ attachment: ChatAttachment) {
+        let total = attachments.reduce(0) { $0 + $1.data.count } + attachment.data.count
+        guard total <= Self.maxTotalBytes else {
+            errorMessage = "That's too much for one message. Send these first, then add more."
+            return
+        }
+        attachments.append(attachment)
+    }
+
+    func attach(filesAt urls: [URL]) {
+        for url in urls where canAttachMore { attach(fileAt: url) }
+    }
+
     func attach(fileAt url: URL) {
+        guard canAttachMore else { return }
         let secured = url.startAccessingSecurityScopedResource()
         defer { if secured { url.stopAccessingSecurityScopedResource() } }
 
@@ -95,9 +136,11 @@ final class ChatViewModel {
                     errorMessage = "That PDF is too large (max \(Self.maxAttachmentBytes / 1_000_000) MB)."
                     return
                 }
-                attachment = ChatAttachment(name: url.lastPathComponent, mediaType: "application/pdf", data: data)
+                add(ChatAttachment(name: url.lastPathComponent, mediaType: "application/pdf", data: data))
             } else if type.conforms(to: .image), let image = UIImage(data: data) {
-                attachment = Self.compress(image, name: url.lastPathComponent)
+                if let compressed = Self.compress(image, name: url.lastPathComponent, budget: Self.photoBudgetBytes) {
+                    add(compressed)
+                }
             } else {
                 errorMessage = "Only images and PDFs are supported."
             }
@@ -106,23 +149,24 @@ final class ChatViewModel {
         }
     }
 
-    func removeAttachment() {
-        attachment = nil
+    func removeAttachment(_ attachment: ChatAttachment) {
+        attachments.removeAll { $0.id == attachment.id }
     }
 
-    /// Downscale and re-encode as JPEG until it fits the size budget.
-    private static func compress(_ image: UIImage, name: String) -> ChatAttachment? {
-        var working = image
-        let maxSide: CGFloat = 2048
-        let longest = max(image.size.width, image.size.height)
-        if longest > maxSide, let scaled = image.resized(longestSide: maxSide) {
-            working = scaled
-        }
-
-        for quality in stride(from: 0.85, through: 0.4, by: -0.15) {
-            if let data = working.jpegData(compressionQuality: quality), data.count <= maxAttachmentBytes {
-                let base = (name as NSString).deletingPathExtension
-                return ChatAttachment(name: "\(base).jpg", mediaType: "image/jpeg", data: data)
+    /// Downscale and re-encode as JPEG until it fits the size budget. Tries a
+    /// 1536 px long side first (plenty for Erna to read), then smaller.
+    private static func compress(_ image: UIImage, name: String, budget: Int) -> ChatAttachment? {
+        let base = (name as NSString).deletingPathExtension
+        for maxSide in [1536.0, 1024.0, 768.0] as [CGFloat] {
+            var working = image
+            let longest = max(image.size.width, image.size.height)
+            if longest > maxSide, let scaled = image.resized(longestSide: maxSide) {
+                working = scaled
+            }
+            for quality in stride(from: 0.8, through: 0.4, by: -0.2) {
+                if let data = working.jpegData(compressionQuality: quality), data.count <= budget {
+                    return ChatAttachment(name: "\(base).jpg", mediaType: "image/jpeg", data: data)
+                }
             }
         }
         return nil
@@ -148,10 +192,10 @@ final class ChatViewModel {
                 body: ChatRequest(
                     conversationId: conversationId,
                     messages: payload,
-                    attachments: inFlightAttachment.map { [$0] }
+                    attachments: inFlightAttachments.isEmpty ? nil : inFlightAttachments
                 )
             )
-            inFlightAttachment = nil
+            inFlightAttachments = []
             conversationId = response.conversationId
             messages.append(response.message)
             await loadConversations()
@@ -247,7 +291,7 @@ struct ChatView: View {
     @State private var showingHistory = false
     @State private var showingPhotoPicker = false
     @State private var showingFilePicker = false
-    @State private var pickedPhoto: PhotosPickerItem?
+    @State private var pickedPhotos: [PhotosPickerItem] = []
 
     var body: some View {
         NavigationStack {
@@ -355,9 +399,15 @@ struct ChatView: View {
         @Bindable var model = model
 
         return VStack(spacing: 8) {
-            if let attachment = model.attachment {
-                AttachmentChip(attachment: attachment) { model.removeAttachment() }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            if !model.attachments.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(model.attachments) { attachment in
+                            AttachmentChip(attachment: attachment) { model.removeAttachment(attachment) }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             HStack(alignment: .bottom, spacing: 10) {
@@ -365,12 +415,12 @@ struct ChatView: View {
                     Button {
                         showingPhotoPicker = true
                     } label: {
-                        Label("Photo", systemImage: "photo")
+                        Label("Photos", systemImage: "photo.on.rectangle")
                     }
                     Button {
                         showingFilePicker = true
                     } label: {
-                        Label("File (PDF or image)", systemImage: "doc")
+                        Label("Files (PDF or image)", systemImage: "doc")
                     }
                 } label: {
                     Image(systemName: "paperclip")
@@ -379,7 +429,7 @@ struct ChatView: View {
                         .frame(width: 38, height: 38)
                         .panel(strong: true)
                 }
-                .disabled(model.isSending)
+                .disabled(model.isSending || !model.canAttachMore)
 
                 TextField("Message Erna", text: $model.input, axis: .vertical)
                     .lineLimit(1...5)
@@ -407,20 +457,26 @@ struct ChatView: View {
         .overlay(alignment: .top) {
             Rectangle().fill(Theme.border).frame(height: 1)
         }
-        .photosPicker(isPresented: $showingPhotoPicker, selection: $pickedPhoto, matching: .images)
-        .onChange(of: pickedPhoto) { _, item in
+        .photosPicker(
+            isPresented: $showingPhotoPicker,
+            selection: $pickedPhotos,
+            maxSelectionCount: model.remainingAttachmentSlots,
+            matching: .images
+        )
+        .onChange(of: pickedPhotos) { _, items in
+            guard !items.isEmpty else { return }
             Task {
-                await model.attach(photo: item)
-                pickedPhoto = nil
+                await model.attach(photos: items)
+                pickedPhotos = []
             }
         }
         .fileImporter(
             isPresented: $showingFilePicker,
             allowedContentTypes: [.pdf, .image],
-            allowsMultipleSelection: false
+            allowsMultipleSelection: true
         ) { result in
-            if case .success(let urls) = result, let url = urls.first {
-                model.attach(fileAt: url)
+            if case .success(let urls) = result {
+                model.attach(filesAt: urls)
             }
         }
     }
