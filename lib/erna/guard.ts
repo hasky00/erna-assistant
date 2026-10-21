@@ -93,11 +93,23 @@ const PER_MINUTE = Number(optionalEnv("ERNA_RATE_PER_MINUTE") || 20);
 const PER_DAY = Number(optionalEnv("ERNA_RATE_PER_DAY") || 400);
 
 /**
+ * Owner accounts are never rate limited. Comma-separated emails in
+ * ERNA_OWNER_EMAILS. The owner pays for her own usage, so this is a
+ * convenience, not a hole. Unset → nobody is exempt.
+ */
+export function isOwner(user: User) {
+  const email = user.email?.toLowerCase();
+  return !!email && csv("ERNA_OWNER_EMAILS").includes(email);
+}
+
+/**
  * Cheap per-user rate limit backed by the existing `messages` table: count the
  * caller's own user messages in the last minute and day. Serverless-safe (no
  * in-memory state) and RLS-scoped, so it needs no extra table.
  */
-export async function enforceChatRateLimit(supabase: SupabaseClient, userId: string) {
+export async function enforceChatRateLimit(supabase: SupabaseClient, user: User) {
+  if (isOwner(user)) return;
+  const userId = user.id;
   const now = Date.now();
   const since = (ms: number) => new Date(now - ms).toISOString();
 

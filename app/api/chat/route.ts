@@ -49,7 +49,7 @@ const requestSchema = z.object({
 export async function POST(request: Request) {
   try {
     const { supabase, user } = await authenticate(request);
-    await enforceChatRateLimit(supabase, user.id);
+    await enforceChatRateLimit(supabase, user);
 
     const parsed = requestSchema.safeParse(await request.json());
     if (!parsed.success) {
