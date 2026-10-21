@@ -43,7 +43,14 @@ const requestSchema = z.object({
     .max(200),
   // Attached to the *last* user message only. Earlier attachments live on as a
   // "[attached: name]" note in history, not as bytes.
-  attachments: z.array(attachmentSchema).max(3).optional(),
+  attachments: z
+    .array(attachmentSchema)
+    .max(4)
+    .optional()
+    .refine(
+      (list) => !list || list.reduce((sum, a) => sum + a.data.length, 0) <= Math.ceil((MAX_ATTACHMENT_BYTES * 4) / 3) + 16,
+      { message: "Attachments are too large together; send fewer per message." },
+    ),
 });
 
 export async function POST(request: Request) {
