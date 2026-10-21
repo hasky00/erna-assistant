@@ -292,6 +292,7 @@ struct ChatView: View {
     @State private var showingPhotoPicker = false
     @State private var showingFilePicker = false
     @State private var pickedPhotos: [PhotosPickerItem] = []
+    @State private var speech = SpeechRecognizer()
 
     var body: some View {
         NavigationStack {
@@ -386,6 +387,17 @@ struct ChatView: View {
         }
     }
 
+    /// Tap once to talk, tap again to stop; the words land in the text box so
+    /// the user can fix a word before sending.
+    private func toggleListening(_ model: ChatViewModel) {
+        if speech.isListening {
+            let heard = speech.stop()
+            if !heard.isEmpty { model.input = heard }
+        } else {
+            Task { await speech.start() }
+        }
+    }
+
     private func scrollToEnd(_ proxy: ScrollViewProxy, _ model: ChatViewModel) {
         let target: (any Hashable)? = model.isSending ? "typing" : model.messages.last?.id
         guard let target else { return }
@@ -431,12 +443,27 @@ struct ChatView: View {
                 }
                 .disabled(model.isSending || !model.canAttachMore)
 
-                TextField("Message Erna", text: $model.input, axis: .vertical)
+                TextField(speech.isListening ? "Listening…" : "Message Erna", text: $model.input, axis: .vertical)
                     .lineLimit(1...5)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                     .foregroundStyle(Theme.foreground)
                     .panel(strong: true)
+                    .disabled(speech.isListening)
+
+                Button {
+                    toggleListening(model)
+                } label: {
+                    Image(systemName: speech.isListening ? "stop.fill" : "mic.fill")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(speech.isListening ? Theme.background : Theme.accent)
+                        .frame(width: 38, height: 38)
+                        .background(speech.isListening ? Theme.accent : Color.clear)
+                        .clipShape(Circle())
+                        .panel(strong: !speech.isListening)
+                }
+                .disabled(model.isSending)
+                .accessibilityLabel(speech.isListening ? "Stop listening" : "Talk to Erna")
 
                 Button {
                     Task { await model.send() }
@@ -456,6 +483,15 @@ struct ChatView: View {
         .background(Theme.background)
         .overlay(alignment: .top) {
             Rectangle().fill(Theme.border).frame(height: 1)
+        }
+        .onChange(of: speech.transcript) { _, text in
+            if speech.isListening { model.input = text }
+        }
+        .onChange(of: speech.state) { _, state in
+            if case .denied(let reason) = state {
+                model.errorMessage = reason
+                speech.clearError()
+            }
         }
         .photosPicker(
             isPresented: $showingPhotoPicker,

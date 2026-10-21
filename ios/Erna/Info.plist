@@ -28,6 +28,10 @@
 	<string>$(ERNA_SUPABASE_URL)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Erna listens while you talk so you can speak instead of typing.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Erna turns your voice into text, on this phone where possible.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

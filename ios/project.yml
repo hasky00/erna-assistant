@@ -48,6 +48,8 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         UIUserInterfaceStyle: Dark
         ITSAppUsesNonExemptEncryption: false
+        NSMicrophoneUsageDescription: Erna listens while you talk so you can speak instead of typing.
+        NSSpeechRecognitionUsageDescription: Erna turns your voice into text, on this phone where possible.
         # Read by Config.swift. Values come from Config/Secrets.xcconfig.
         ERNA_API_BASE_URL: $(ERNA_API_BASE_URL)
         ERNA_SUPABASE_URL: $(ERNA_SUPABASE_URL)
