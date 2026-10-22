@@ -16,6 +16,7 @@ import {
 import { deleteNote, saveNote, searchKnowledge } from "@/lib/erna/knowledge";
 import { convertCurrency } from "@/lib/erna/currency";
 import { lookupBookingRule } from "@/lib/erna/accounting";
+import { planTrip, departures as rejseplanenDepartures, searchLocation } from "@/lib/erna/rejseplanen";
 
 export const ernaTools: Anthropic.Tool[] = [
   {
@@ -293,6 +294,52 @@ export const ernaTools: Anthropic.Tool[] = [
         additionalProperties: false,
       },
   },
+  {
+      name: "plan_journey_dk",
+      description:
+        "Plan a door-to-door public transport journey anywhere in Denmark using Rejseplanen: S-trains, regional/IC trains, metro, buses, light rail and harbour buses combined, with live departure times, platforms and changes. Use whenever the user asks how to get from A to B inside Denmark (e.g. 'Skovlunde to the airport tomorrow at 12'). Call current_datetime first if the user says 'now', 'tomorrow' or a weekday so you can pass an exact date.",
+      input_schema: {
+        type: "object",
+        properties: {
+          from: { type: "string", description: "Origin: a station, bus stop, address or place name, e.g. 'Skovlunde St.' or 'Blokhaven 64, Skovlunde'." },
+          to: { type: "string", description: "Destination: station, stop, address or place name, e.g. 'Københavns Lufthavn'." },
+          date: { type: "string", description: "Travel date as YYYY-MM-DD. Omit for today." },
+          time: { type: "string", description: "Time as HH:MM (24h, Danish local time). Omit for now." },
+          arrive_by: { type: "boolean", description: "True if the time is when the user must ARRIVE rather than depart." },
+        },
+        required: ["from", "to"],
+        additionalProperties: false,
+      },
+  },
+  {
+      name: "departures_dk",
+      description:
+        "Live departure board for a Danish station or bus stop via Rejseplanen: next trains, S-trains, metro and buses with real-time delays and platforms. Use for 'when is the next bus from X' or 'what leaves Skovlunde St. around 12'.",
+      input_schema: {
+        type: "object",
+        properties: {
+          stop: { type: "string", description: "Station or stop name, e.g. 'Skovlunde St.' or 'Nørreport'." },
+          date: { type: "string", description: "YYYY-MM-DD. Omit for today." },
+          time: { type: "string", description: "HH:MM from which to list departures. Omit for now." },
+          limit: { type: "number", description: "How many departures to return (default 8, max 20)." },
+        },
+        required: ["stop"],
+        additionalProperties: false,
+      },
+  },
+  {
+      name: "find_stop_dk",
+      description:
+        "Look up Danish stations, stops and addresses by name in Rejseplanen. Use when a place name is ambiguous (e.g. several stops called 'Herlev') before planning a journey.",
+      input_schema: {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+        },
+        required: ["query"],
+        additionalProperties: false,
+      },
+  },
 ];
 
 export async function runTool(input: {
@@ -446,6 +493,29 @@ export async function runTool(input: {
 
     if (error) throw error;
     return { ok: true, integrations: data || [] };
+  }
+
+  if (input.name === "plan_journey_dk") {
+    return planTrip({
+      from: String(args.from || ""),
+      to: String(args.to || ""),
+      date: typeof args.date === "string" ? args.date : undefined,
+      time: typeof args.time === "string" ? args.time : undefined,
+      arriveBy: args.arrive_by === true,
+    });
+  }
+
+  if (input.name === "departures_dk") {
+    return rejseplanenDepartures({
+      stop: String(args.stop || ""),
+      date: typeof args.date === "string" ? args.date : undefined,
+      time: typeof args.time === "string" ? args.time : undefined,
+      limit: typeof args.limit === "number" ? args.limit : undefined,
+    });
+  }
+
+  if (input.name === "find_stop_dk") {
+    return searchLocation(String(args.query || ""));
   }
 
   return { ok: false, error: `Unknown tool: ${input.name}` };
