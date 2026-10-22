@@ -16,6 +16,7 @@ import {
 import { deleteNote, saveNote, searchKnowledge } from "@/lib/erna/knowledge";
 import { convertCurrency } from "@/lib/erna/currency";
 import { lookupBookingRule } from "@/lib/erna/accounting";
+import { getWeather } from "@/lib/erna/weather";
 
 export const ernaTools: Anthropic.Tool[] = [
   {
@@ -283,6 +284,20 @@ export const ernaTools: Anthropic.Tool[] = [
       },
   },
   {
+      name: "get_weather",
+      description:
+        "Current weather and daily forecast for a place, worldwide (Open-Meteo, free). Returns temperature, feels-like, wind, condition, and per-day high/low/rain chance. Always pass a place name: use the one the user wrote, or a home city the user told you earlier (check memory). Never guess the user's location; if none is known, ask.",
+      input_schema: {
+        type: "object",
+        properties: {
+          location: { type: "string", description: "City or place name, e.g. 'Skovlunde', 'Copenhagen', 'Jakarta', 'Tokyo'." },
+          days: { type: "number", minimum: 1, maximum: 7, description: "How many forecast days to return, 1-7. Defaults to 1 (today)." },
+        },
+        required: ["location"],
+        additionalProperties: false,
+      },
+  },
+  {
       name: "current_datetime",
       description: "Get the exact current date and time in a given IANA timezone. Use for 'what time is it in Jakarta', countdowns, or date arithmetic.",
       input_schema: {
@@ -419,6 +434,10 @@ export async function runTool(input: {
 
   if (input.name === "bitcoin_convert") {
     return bitcoinConvert(Number(args.amount), String(args.from || ""), String(args.to || ""));
+  }
+
+  if (input.name === "get_weather") {
+    return getWeather(String(args.location || ""), args.days);
   }
 
   if (input.name === "current_datetime") {
