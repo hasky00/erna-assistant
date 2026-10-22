@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
+import { isValidTimeZone } from "@/lib/erna/time";
 import type Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getAnthropic, getAnthropicModel } from "@/lib/erna/llm";
 import { authenticate, enforceChatRateLimit, AuthError } from "@/lib/erna/guard";
 import { composeSystemPrompt, getPersonalityPrompt } from "@/lib/erna/prompts";
-import { ensureProfile, getOpenTasks, getRelevantMemories } from "@/lib/erna/memory";
+import { ensureProfile, getOpenTasks, getRelevantMemories, adoptDeviceTimezone } from "@/lib/erna/memory";
 import { ernaTools, runTool } from "@/lib/erna/tools";
 
 // How many assistant<->tool round trips a single chat turn may take before we
@@ -69,6 +70,13 @@ export async function POST(request: Request) {
     }
 
     const profile = await ensureProfile(supabase, user.id, user.email);
+    // The app reports the phone's zone; follow it unless the user locked one.
+    const deviceTz = request.headers.get("x-erna-timezone");
+    profile.timezone = await adoptDeviceTimezone(
+      supabase,
+      profile,
+      isValidTimeZone(deviceTz) ? deviceTz : null,
+    );
     const [personalityPrompt, memories, tasks, conversationId] = await Promise.all([
       getPersonalityPrompt(supabase, user.id),
       getRelevantMemories(supabase, user.id, lastUserMessage.content),

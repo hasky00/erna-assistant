@@ -157,7 +157,10 @@ export function ChatShell() {
 
     const response = await fetch("/api/chat", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Erna-Timezone": Intl.DateTimeFormat().resolvedOptions().timeZone,
+      },
       body: JSON.stringify({ conversationId, messages: nextMessages }),
     });
 

@@ -36,12 +36,40 @@ export async function updateProfilePreferences(
   if (error) throw error;
 }
 
-export async function updateProfileTimezone(supabase: SupabaseClient, userId: string, timezone: string) {
-  const { error } = await supabase
-    .from("profiles")
-    .update({ timezone, updated_at: new Date().toISOString() })
-    .eq("id", userId);
+export async function updateProfileTimezone(
+  supabase: SupabaseClient,
+  userId: string,
+  timezone: string,
+  options: { lock?: boolean } = {},
+) {
+  const update: Record<string, unknown> = { timezone, updated_at: new Date().toISOString() };
+  if (options.lock) {
+    // Merge rather than replace preferences: timezone_locked=true means the
+    // user picked this zone on purpose; the device zone must not override it.
+    const { data } = await supabase.from("profiles").select("preferences").eq("id", userId).maybeSingle<{
+      preferences: Record<string, unknown> | null;
+    }>();
+    update.preferences = { ...(data?.preferences ?? {}), timezone_locked: true };
+  }
+  const { error } = await supabase.from("profiles").update(update).eq("id", userId);
   if (error) throw error;
+}
+
+/**
+ * Follow the device: when the app reports the phone's timezone and the user
+ * has not locked one explicitly, adopt it. Returns the zone to use now.
+ */
+export async function adoptDeviceTimezone(
+  supabase: SupabaseClient,
+  profile: UserProfile,
+  deviceTimezone: string | null,
+) {
+  const current = profile.timezone || DEFAULT_TIMEZONE;
+  if (!deviceTimezone || deviceTimezone === current) return current;
+  const locked = Boolean((profile.preferences as Record<string, unknown> | null)?.timezone_locked);
+  if (locked) return current;
+  await updateProfileTimezone(supabase, profile.id, deviceTimezone);
+  return deviceTimezone;
 }
 
 export async function saveMemory(

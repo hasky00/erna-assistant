@@ -16,6 +16,7 @@ import {
 import { deleteNote, saveNote, searchKnowledge } from "@/lib/erna/knowledge";
 import { convertCurrency } from "@/lib/erna/currency";
 import { lookupBookingRule } from "@/lib/erna/accounting";
+import { formatInZone, localizeTimestamps } from "@/lib/erna/time";
 
 export const ernaTools: Anthropic.Tool[] = [
   {
@@ -40,7 +41,7 @@ export const ernaTools: Anthropic.Tool[] = [
         properties: {
           title: { type: "string" },
           notes: { type: "string" },
-          due_at: { type: "string", description: "ISO timestamp or null" },
+          due_at: { type: "string", description: "ISO 8601 with the user's UTC offset, e.g. 2026-10-25T09:00:00+02:00 (never a bare time without offset), or null." },
         },
         required: ["title"],
         additionalProperties: false,
@@ -305,6 +306,7 @@ export async function runTool(input: {
   conversationId?: string | null;
 }) {
   const args = parseToolArgs(input.argumentsText);
+  const tz = input.timezone || DEFAULT_TIMEZONE;
 
   if (input.name === "save_memory") {
     const memory = await saveMemory(
@@ -325,7 +327,7 @@ export async function runTool(input: {
       notes: typeof args.notes === "string" ? args.notes : null,
       due_at: typeof args.due_at === "string" ? args.due_at : null,
     });
-    return { ok: true, task };
+    return { ok: true, task: localizeTimestamps(task, tz), timezone: tz };
   }
 
   if (input.name === "list_tasks") {
@@ -334,20 +336,20 @@ export async function runTool(input: {
         ? args.status
         : "open";
     const tasks = await listTasks(input.supabase, input.userId, status);
-    return { ok: true, tasks };
+    return { ok: true, tasks: tasks.map((task) => localizeTimestamps(task, tz)), timezone: tz };
   }
 
   if (input.name === "complete_task") {
     const task = await setTaskStatus(input.supabase, input.userId, String(args.task_id), "done");
     if (!task) return { ok: false, error: "No matching task found for that id." };
-    return { ok: true, task };
+    return { ok: true, task: localizeTimestamps(task, tz), timezone: tz };
   }
 
   if (input.name === "reschedule_task") {
     const dueAt = typeof args.due_at === "string" && args.due_at ? args.due_at : null;
     const task = await rescheduleTask(input.supabase, input.userId, String(args.task_id), dueAt);
     if (!task) return { ok: false, error: "No matching task found for that id." };
-    return { ok: true, task };
+    return { ok: true, task: localizeTimestamps(task, tz), timezone: tz };
   }
 
   if (input.name === "save_note") {
@@ -428,14 +430,15 @@ export async function runTool(input: {
   }
 
   if (input.name === "set_timezone") {
-    const tz = String(args.timezone || "").trim();
+    const wanted = String(args.timezone || "").trim();
     try {
-      new Intl.DateTimeFormat("en-GB", { timeZone: tz });
+      new Intl.DateTimeFormat("en-GB", { timeZone: wanted });
     } catch {
-      return { ok: false, error: `Unknown timezone: ${tz}` };
+      return { ok: false, error: `Unknown timezone: ${wanted}` };
     }
-    await updateProfileTimezone(input.supabase, input.userId, tz);
-    return { ok: true, timezone: tz };
+    // Explicitly chosen: lock it so the phone's timezone no longer overrides it.
+    await updateProfileTimezone(input.supabase, input.userId, wanted, { lock: true });
+    return { ok: true, timezone: wanted, now: formatInZone(new Date().toISOString(), wanted) };
   }
 
   if (input.name === "integration_status") {
