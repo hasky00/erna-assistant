@@ -53,6 +53,21 @@ final class ErnaAPI {
         try await perform("DELETE", path)
     }
 
+    /// POST and hand back the raw body (used for binary replies such as audio).
+    func postData(_ path: String, body: some Encodable) async throws -> Data {
+        let payload = try encode(body)
+        let token = try await auth.accessToken()
+        var (data, status) = try await send("POST", path, query: [], body: payload, token: token)
+        if status == 401 {
+            let fresh = try await auth.refreshedAccessToken()
+            (data, status) = try await send("POST", path, query: [], body: payload, token: fresh)
+        }
+        guard (200..<300).contains(status) else {
+            throw APIError(status: status, message: Self.errorMessage(from: data, status: status))
+        }
+        return data
+    }
+
     // MARK: - Plumbing
 
     private func encode(_ value: some Encodable) throws -> Data {
