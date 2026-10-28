@@ -27,14 +27,12 @@ targets:
       Release: Config/Secrets.xcconfig
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: site.aiassistent.erna
+        PRODUCT_BUNDLE_IDENTIFIER: com.haskylabs.erna
         PRODUCT_NAME: Erna
         TARGETED_DEVICE_FAMILY: "1,2"
         GENERATE_INFOPLIST_FILE: NO
-        # Simulator builds work without a signing team; set one in Xcode to run
-        # on a device or to archive for TestFlight.
         CODE_SIGN_STYLE: Automatic
-        CODE_SIGNING_ALLOWED: NO
+        DEVELOPMENT_TEAM: Z2HZVUFRJW
     info:
       path: Erna/Info.plist
       properties:
