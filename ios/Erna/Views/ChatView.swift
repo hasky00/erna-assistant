@@ -295,6 +295,7 @@ struct ChatView: View {
     @State private var showingFilePicker = false
     @State private var pickedPhotos: [PhotosPickerItem] = []
     @State private var speech = SpeechRecognizer()
+    @State private var voice = SpeechPlayer()
 
     var body: some View {
         NavigationStack {
@@ -364,7 +365,14 @@ struct ChatView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 14) {
                         ForEach(model.messages) { message in
-                            MessageBubble(message: message).id(message.id)
+                            MessageBubble(
+                                message: message,
+                                voiceState: voice.state(for: message.id),
+                                onSpeak: message.role == .assistant
+                                    ? { voice.toggle(message, api: services.api) }
+                                    : nil
+                            )
+                            .id(message.id)
                         }
 
                         if model.isSending {
@@ -572,6 +580,8 @@ private extension UIImage {
 
 private struct MessageBubble: View {
     let message: ChatMessage
+    var voiceState: SpeechPlayer.State = .idle
+    var onSpeak: (() -> Void)? = nil
 
     private var isUser: Bool { message.role == .user }
 
@@ -579,18 +589,38 @@ private struct MessageBubble: View {
         HStack {
             if isUser { Spacer(minLength: 40) }
 
-            Text(Self.render(message.content))
-                .font(.body)
-                .foregroundStyle(Theme.foreground)
-                .textSelection(.enabled)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(isUser ? Theme.accent.opacity(0.18) : Theme.panel)
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(isUser ? Theme.accent.opacity(0.35) : Theme.border, lineWidth: 1)
-                )
+            VStack(alignment: .leading, spacing: 6) {
+                Text(Self.render(message.content))
+                    .font(.body)
+                    .foregroundStyle(Theme.foreground)
+                    .textSelection(.enabled)
+
+                if let onSpeak {
+                    Button(action: onSpeak) {
+                        HStack(spacing: 5) {
+                            if voiceState == .loading {
+                                ProgressView().controlSize(.mini)
+                            } else {
+                                Image(systemName: voiceState == .playing ? "stop.fill" : "speaker.wave.2.fill")
+                            }
+                            Text(voiceState == .playing ? "Stop" : "Listen")
+                        }
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Theme.accent)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(voiceState == .loading)
+                    .accessibilityLabel(voiceState == .playing ? "Stop Erna" : "Hear Erna say this")
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(isUser ? Theme.accent.opacity(0.18) : Theme.panel)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(isUser ? Theme.accent.opacity(0.35) : Theme.border, lineWidth: 1)
+            )
 
             if !isUser { Spacer(minLength: 40) }
         }
@@ -870,5 +900,76 @@ final class SpeechRecognizer {
 
     func clearError() {
         if case .denied = state { state = .idle }
+    }
+}
+
+// MARK: - Spoken replies
+
+/// Plays one of Erna's replies through the server's text-to-speech route
+/// (`POST /api/tts`, ElevenLabs behind it). One reply at a time; tapping the
+/// same one again stops it, tapping another switches to it.
+@MainActor
+@Observable
+final class SpeechPlayer: NSObject, AVAudioPlayerDelegate {
+    enum State: Equatable { case idle, loading, playing }
+
+    private(set) var currentId: UUID?
+    private(set) var current: State = .idle
+    private var player: AVAudioPlayer?
+    private var task: Task<Void, Never>?
+
+    func state(for id: UUID) -> State {
+        currentId == id ? current : .idle
+    }
+
+    func toggle(_ message: ChatMessage, api: ErnaAPI) {
+        if currentId == message.id, current != .idle {
+            stop()
+            return
+        }
+        stop()
+        currentId = message.id
+        current = .loading
+
+        struct Body: Encodable { let text: String }
+        task = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let data = try await api.postData("/api/tts", body: Body(text: message.content))
+                guard !Task.isCancelled, currentId == message.id else { return }
+
+                let session = AVAudioSession.sharedInstance()
+                try session.setCategory(.playback, mode: .spokenAudio, options: .duckOthers)
+                try session.setActive(true)
+
+                let player = try AVAudioPlayer(data: data, fileTypeHint: AVFileType.mp3.rawValue)
+                player.delegate = self
+                self.player = player
+                player.prepareToPlay()
+                player.play()
+                current = .playing
+            } catch {
+                print("[erna] tts failed:", error.localizedDescription)
+                reset()
+            }
+        }
+    }
+
+    func stop() {
+        task?.cancel()
+        task = nil
+        player?.stop()
+        reset()
+    }
+
+    private func reset() {
+        player = nil
+        currentId = nil
+        current = .idle
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+
+    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        Task { @MainActor in self.reset() }
     }
 }
