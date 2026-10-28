@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { authenticate, enforceChatRateLimit, safeError } from "@/lib/erna/guard";
-import { synthesize, toSpeakable, ttsConfigured } from "@/lib/erna/tts";
+import { TTSUpstreamError, synthesize, toSpeakable, ttsConfigured } from "@/lib/erna/tts";
 
 /**
  * POST /api/tts  { text: string }  →  audio/mpeg
@@ -33,6 +33,10 @@ export async function POST(request: Request) {
       },
     });
   } catch (error) {
+    if (error instanceof TTSUpstreamError) {
+      console.error("[erna] tts upstream", error.message);
+      return NextResponse.json({ error: error.message }, { status: 502 });
+    }
     return safeError(error, "Could not generate speech");
   }
 }

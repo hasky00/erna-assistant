@@ -13,6 +13,16 @@ import { optionalEnv } from "@/lib/env";
  *   ELEVENLABS_MODEL_ID  optional, defaults to the fast/cheap Flash model
  */
 
+/** ElevenLabs said no; carries their status and message so the client can show it. */
+export class TTSUpstreamError extends Error {
+  constructor(
+    public readonly upstreamStatus: number,
+    detail: string,
+  ) {
+    super(`ElevenLabs ${upstreamStatus}: ${detail}`);
+  }
+}
+
 export const DEFAULT_VOICE_ID = "gIfqD5jrnhkFu8ENVbXC"; // Isabella
 export const DEFAULT_MODEL_ID = "eleven_flash_v2_5";
 
@@ -75,7 +85,7 @@ export async function synthesize(text: string): Promise<ArrayBuffer> {
 
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
-    throw new Error(`ElevenLabs ${response.status}: ${detail.slice(0, 300)}`);
+    throw new TTSUpstreamError(response.status, detail.slice(0, 300));
   }
   return response.arrayBuffer();
 }
