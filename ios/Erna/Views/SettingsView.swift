@@ -5,6 +5,7 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(AppServices.self) private var services
     @State private var showingSignOut = false
+    @AppStorage("spokenReplies") private var spokenReplies = false
 
     private var appVersion: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
@@ -42,6 +43,16 @@ struct SettingsView: View {
                     Text("Your data")
                 } footer: {
                     Text("Every fact Erna remembers, where it came from, and a way to forget it.")
+                }
+                .listRowBackground(Theme.panel)
+
+                Section {
+                    Toggle("Spoken replies", isOn: $spokenReplies)
+                        .tint(Theme.accent)
+                } header: {
+                    Text("Voice")
+                } footer: {
+                    Text("Erna reads every reply aloud. When this is off she still answers out loud if you asked with the microphone, and the Listen button always works.")
                 }
                 .listRowBackground(Theme.panel)
 

@@ -19,6 +19,13 @@ final class ChatViewModel {
     var isSending = false
     var errorMessage: String?
 
+    /// Set by the composer when the text came from the microphone, so the
+    /// reply can be spoken back even with the Settings toggle off.
+    var inputCameFromVoice = false
+    /// The reply that just arrived and may want reading aloud; the view
+    /// consumes it (see `.onChange`) and clears it.
+    var replyToSpeak: (message: ChatMessage, askedByVoice: Bool)?
+
     /// Pending attachments for the next message.
     var attachments: [ChatAttachment] = []
     /// Attachments that travelled with the last sent message, kept for retry.
@@ -75,6 +82,8 @@ final class ChatViewModel {
         }
 
         input = ""
+        let askedByVoice = inputCameFromVoice
+        inputCameFromVoice = false
         inFlightAttachments = attachments
         attachments = []
 
@@ -82,7 +91,7 @@ final class ChatViewModel {
             ? trimmed
             : "\(trimmed)\n\n[attached: \(inFlightAttachments.map(\.name).joined(separator: ", "))]"
         messages.append(ChatMessage(role: .user, content: shown))
-        await deliver()
+        await deliver(askedByVoice: askedByVoice)
     }
 
     // MARK: - Attachments
@@ -179,7 +188,7 @@ final class ChatViewModel {
         await deliver()
     }
 
-    private func deliver() async {
+    private func deliver(askedByVoice: Bool = false) async {
         isSending = true
         errorMessage = nil
         defer { isSending = false }
@@ -200,6 +209,7 @@ final class ChatViewModel {
             inFlightAttachments = []
             conversationId = response.conversationId
             messages.append(response.message)
+            replyToSpeak = (response.message, askedByVoice)
             await loadConversations()
         } catch {
             errorMessage = error.localizedDescription
@@ -296,6 +306,8 @@ struct ChatView: View {
     @State private var pickedPhotos: [PhotosPickerItem] = []
     @State private var speech = SpeechRecognizer()
     @State private var voice = SpeechPlayer()
+    /// Settings → "Spoken replies". Replies to a spoken question are always read aloud.
+    @AppStorage("spokenReplies") private var spokenReplies = false
 
     var body: some View {
         NavigationStack {
@@ -402,7 +414,10 @@ struct ChatView: View {
     private func toggleListening(_ model: ChatViewModel) {
         if speech.isListening {
             let heard = speech.stop()
-            if !heard.isEmpty { model.input = heard }
+            if !heard.isEmpty {
+                model.input = heard
+                model.inputCameFromVoice = true
+            }
         } else {
             Task { await speech.start() }
         }
@@ -493,6 +508,13 @@ struct ChatView: View {
         .background(Theme.background)
         .overlay(alignment: .top) {
             Rectangle().fill(Theme.border).frame(height: 1)
+        }
+        .onChange(of: model.replyToSpeak?.message.id) { _, _ in
+            guard let pending = model.replyToSpeak else { return }
+            model.replyToSpeak = nil
+            if spokenReplies || pending.askedByVoice {
+                voice.toggle(pending.message, api: services.api)
+            }
         }
         .onChange(of: speech.transcript) { _, text in
             if speech.isListening { model.input = text }
